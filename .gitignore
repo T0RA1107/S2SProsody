@@ -1,3 +1,8 @@
+.venv
+data
+src/.s2sprosody
+lib/*
+
 .ipynb_checkpoints
 .python-version
 *.png

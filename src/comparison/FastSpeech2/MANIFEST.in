@@ -1,0 +1,5 @@
+recursive-include FastSpeech2/config *
+recursive-include FastSpeech2/preprocessed_data *
+recursive-include FastSpeech2/lexicon *
+recursive-include FastSpeech2/hifigan/ *.pth.tar* config.json
+recursive-include FastSpeech2/output/ckpt *
