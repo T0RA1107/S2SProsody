@@ -20,39 +20,30 @@ from tqdm import tqdm
 from typing import Tuple, Optional, Union
 from tensorboardX import SummaryWriter
 
-
-# GloFE related
-from GloFE.models.trans_model_inter_vn import TransBaseModel
-from GloFE.models.ctrgcn_base_p76 import Model as PoseBackbone
-from GloFE.utils.beam_search import AutoRegressiveBeamSearch
-from GloFE.utils.easydict import EasyDict as edict
-from GloFE.utils.mutils import generate_beam, compute_bleu, quick_bleu_metric
+# Project related
+from models.trans_model_inter_vn import TransBaseModel
+from models.ctrgcn_base_p76 import Model as PoseBackbone
+from utils.beam_search import AutoRegressiveBeamSearch
+from utils.easydict import EasyDict as edict
+from utils.mutils import generate_beam, compute_bleu, quick_bleu_metric
 
 # DDP
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 
-# FastSpeech2 related
-from FastSpeech2.utils.model import get_model, get_vocoder
-from FastSpeech2.utils.tools import to_device, synth_samples
-from FastSpeech2.dataset import TextDataset
-from FastSpeech2.text import text_to_sequence
 
 
-def absolute_path_to_glofe(path: str) -> str:
-    if path[0] == '/':
-        return path
-    else:
-        return os.path.join("/home/ubuntu/slocal/S2SProsody/src/comparison/GloFE", path)
 
-class OpenASLPoseDataset(Dataset):
-    def __init__(self, arg_dict, tokenizer, phase='train', split='train', partial_list_path=None):
+
+class How2SignPoseDataset(Dataset):
+    def __init__(self, arg_dict, tokenizer, phase='train', split='train'):
         self.tokenizer = tokenizer
         self.phase = phase
 
-        # path to openasl
-        self.feat_path = absolute_path_to_glofe(arg_dict.get('feat_path', None))
-        self.label_path = absolute_path_to_glofe(arg_dict.get('label_path', None))
+        # path to 'openpose_output/json'
+        # self.cache_path = '/mnt/workspace/How2Sign/openpose_output/cache_inst'
+        self.feat_path = arg_dict.get('feat_path')
+        self.label_path = arg_dict.get('label_path', None)
         assert self.feat_path is not None and self.feat_path is not None
 
         self.local_rank = arg_dict.get('local_rank', 0)
@@ -60,55 +51,47 @@ class OpenASLPoseDataset(Dataset):
         # information about input clips (features)
         self.visual_token_num = arg_dict.get('clip_length', 16)
         self.visual_token_dim = arg_dict.get('prefix_dim', 2048)
-
-
-        # label_path = os.path.join(f'/mnt/workspace/openasl-pre/openasl-v1.0.tsv')
+        
+        # label_path = os.path.join(f'/mnt/workspace/How2Sign/how2sign_realigned_{split}.csv')
         assert self.label_path is not None, 'Specify --label_path'
+        self.label_path = self.label_path.format(split=split)
+
+
         data_frame = pd.read_csv(self.label_path, sep='\t')
-        print(len(data_frame))
-
-        if partial_list_path is not None:
-            partial_mp4_list = open(partial_list_path).readlines()
-            partial_id_list = [s.split("/")[-1].rstrip(".mp4\n") for s in partial_mp4_list]
-
-            partial_mask = pd.Series(np.full(len(data_frame), False))  # data_frame.vid == ""
-            for vid in partial_id_list:
-                partial_mask |= data_frame.vid == vid
-            data_frame = data_frame[partial_mask]
-            assert len(partial_id_list) == len(data_frame)
-        else:
-            # select by split ['train', 'valid']
-            data_frame = data_frame.loc[data_frame['split'].str.contains(split)]
-
-        def filter_missing(row):
-            full_path = os.path.join(self.feat_path, f'{row["vid"]}.pkl')
-            return os.path.exists(full_path) and os.path.getsize(full_path) > 0
-
-        is_missing = data_frame.apply(filter_missing, axis=1)
-        df_filtered = data_frame[is_missing]
-        if self.local_rank == 0:
-            print(f'Split:{split}\nBefore filtering: {len(data_frame)}\n After filtering: {len(df_filtered)}')
         # translation labels and sample names (split agnostic)
-        self.translation = df_filtered['raw-text'].to_list()
-        self.video_names = df_filtered['vid'].to_list()
+        self.translation = list(data_frame['SENTENCE'])
+        self.video_names = list(data_frame['SENTENCE_NAME'])
 
-        self.vn_vocab = 5523
-        self.matched_VNs = json.load(open(absolute_path_to_glofe('notebooks/openasl-v1.0/uncased_filtred_glove_VN_matched_train.json'), 'r'))
+        # filter out missing parts
+        with open('/mnt/user/E-linkezhou.lkz-385206/workspace/How2Sign/tools/how2sign_missing.txt', 'r') as f:
+            names = f.readlines()
+            missing = [x.strip() for x in names]
+        vid_filtered, trans_filtered = [], []
+        for vid, trans in zip(self.video_names, self.translation):
+            if vid not in missing:
+                vid_filtered.append(vid)
+                trans_filtered.append(trans)
+        if self.local_rank == 0:
+            print('Before filtering:', len(self.video_names), '\nAfter filtering:', len(vid_filtered), '\n')
+        self.video_names = vid_filtered
+        self.translation = trans_filtered
+
+        self.vn_vocab = 2191
+        self.matched_VNs = json.load(open('notebooks/how2sign/uncased_filtred_glove_VN_matched_train.json', 'r'))
         self.vn_to_idx = {}
-        with open(absolute_path_to_glofe('notebooks/openasl-v1.0/uncased_filtred_glove_VN_idxs.txt'), 'r') as f:
+        with open('notebooks/how2sign/uncased_filtred_glove_VN_idxs.txt', 'r') as f:
             content = f.readlines()
             for line in content:
                 items = line.strip().split(' ')
                 self.vn_to_idx[items[1]] = int(items[0])
         vn_lens = [len(v) for _,v in self.matched_VNs.items()]
-        self.max_vns = max(vn_lens)
+        self.max_vns = max(vn_lens)        
 
         self.translation_token_ids = []  # encoded indices
         for trans in self.translation:
             # add eos token to labels
             trans_ids = self.tokenizer.encode('<s>') + self.tokenizer.encode(trans) + self.tokenizer.encode(self.eos_token)
             self.translation_token_ids.append(torch.tensor(trans_ids, dtype=torch.int64))
-
         assert len(self.translation_token_ids) == len(
             self.video_names), f'Text ids count:{len(self.translation_token_ids)}\tVid count:{len(self.video_names)}'
         all_len = torch.tensor([len(tk)
@@ -122,34 +105,30 @@ class OpenASLPoseDataset(Dataset):
         return len(self.video_names)
 
     def read_pose_files(self, index: int):
-        # MMPose 76
-        body_sample_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        # Openpose 78
+        body_pose_exclude = {9, 10, 11, 22, 23, 24, 12, 13, 14, 19, 20, 21}
+        body_sample_indices = [x for x in range(25) if x not in body_pose_exclude]
 
         face_sample_indices = [71, 77, 85, 89] + \
                               [40, 42, 44, 45, 47, 49] + \
                               [59, 60, 61, 62, 63, 64] + [65, 66, 67, 68, 69, 70] + \
                               [50]
-
+        face_sample_indices = [x - 23 for x in face_sample_indices]
         # read files
         vid_name = self.video_names[index]
 
         file_path = os.path.join(self.feat_path, f'{vid_name}.pkl')
         with open(file_path, 'rb') as f:
-            pose_keypoints = pickle.load(f)  # T K(133) C
+            joints = pickle.load(f)
 
-        # 23(17+6) 11 selected
-        body_pose = pose_keypoints[:, body_sample_indices, :]
-        hand_right = pose_keypoints[:, 91:112, :]  # 21 Keypoints
-        hand_left = pose_keypoints[:, 112:, :]  # 21 Keypoints
-        face = pose_keypoints[:, face_sample_indices, :]  # 23 Keypoints
+        body_pose = joints[:, :25, :]
+        face = joints[:, 67: , :]
 
-        pose_tuple = (body_pose, hand_left, hand_right, face)
-        pose_cated = np.concatenate(
-            pose_tuple, axis=1)  # [F, 11+21+21+23=76, 3]
+        body_pose = body_pose[:, body_sample_indices, :]    
+        face = face[:, face_sample_indices, :]
 
-        # scale to [-1, 1]
-        # normalization, same as pre-training, might not align with actual output shape which assumed to be [288, 384]
-        pose_cated[:, :, 0:2] = 2.0 * ((pose_cated[:, :, 0:2] / 256.0) - 0.5)
+        pose_tuple = (body_pose, joints[:, 25 : 67, :], face)
+        pose_cated = np.concatenate(pose_tuple, axis=1) 
 
         # pad pose
         T, V, C = pose_cated.shape
@@ -225,7 +204,7 @@ class OpenASLPoseDataset(Dataset):
         mask = mask.float()
 
         return tokens, mask, tokens_length
-
+    
     def get_vn(self, index: int):
         vid = self.video_names[index]
         vns = self.matched_VNs[vid]
@@ -267,19 +246,191 @@ class OpenASLPoseDataset(Dataset):
             return visual_prefix, index, visual_length
 
 
+def save_config(args: argparse.Namespace, output_path: str):
+    config = {}
+    for key, item in args._get_kwargs():
+        config[key] = item
+    out_path = os.path.join(output_path, f"exp_config.json")
+    with open(out_path, 'w') as outfile:
+        json.dump(config, outfile)
+
+
+def init_logging(output_dir, reuse=False):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    # Tensorboard logging
+    tb_log_dir = os.path.join(output_dir, "tb_logs")
+    if os.path.isdir(tb_log_dir) and not reuse:
+        print('Dir existed: ', tb_log_dir)
+        answer = input('Delete it? y/n:')
+        if answer == 'y':
+            shutil.rmtree(tb_log_dir)
+            print('Dir removed: ', tb_log_dir)
+            input('Refresh the website of tensorboard by pressing any keys')
+        else:
+            print('Dir not removed: ', tb_log_dir)
+    train_writer = SummaryWriter(os.path.join(tb_log_dir, 'train'), 'train')
+    return train_writer
+
+
+def train(datasets, model, args,
+          lr: float = 2e-5, warmup_steps: int = 5000, output_dir: str = ".", output_prefix: str = ""):
+
+    device = torch.device(f'cuda:{args.local_rank}')
+    batch_size = args.bs
+    epochs = args.epochs
+    label_smoothing = args.ls
+    best_b4 = 0  # best running metric
+    if args.local_rank == 0:
+        train_writer = init_logging(
+            output_dir=output_dir, reuse=(args.resume != -1))
+        save_config(args, output_dir)
+
+    # Init model
+    # model = model.to(device)
+    model.train()
+    optimizer = AdamW(model.parameters(), lr=lr, no_deprecation_warning=True)
+    dataset_train, dataset_dev, dataset_test = datasets
+    if args.ngpus > 1:
+        sampler = torch.utils.data.distributed.DistributedSampler(
+            dataset_train, num_replicas=args.ngpus, rank=args.local_rank)
+    else:
+        sampler = None
+    train_dataloader = DataLoader(
+        dataset_train,
+        batch_size=batch_size,
+        shuffle=(sampler is None),
+        drop_last=True,
+        sampler=sampler,
+        num_workers=8,
+        pin_memory=True,
+        prefetch_factor=4
+    )
+
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer, num_warmup_steps=warmup_steps, num_training_steps=epochs *
+        len(train_dataloader)
+    )
+
+    if args.resume != -1:
+        epoch_st = args.resume + 1
+        assert epoch_st < epochs
+        global_step = args.resume * len(train_dataloader)
+    else:
+        global_step = 0
+        epoch_st = 0
+
+    for epoch in range(epoch_st, epochs):
+        if args.local_rank == 0:
+            print(f">>> Running exp: {args.work_dir}, Prefix: {args.prefix}")
+            train_writer.add_scalar('epoch', epoch, global_step)
+            sys.stdout.flush()
+            progress = tqdm(total=len(train_dataloader),
+                            desc=f'Epoch {epoch:03d}')
+        # Run for One Epoch
+        for idx, (tokens, mask, prefix, token_length, visual_length, vn_idxs, vn_len) in enumerate(train_dataloader):
+            if args.local_rank == 0:
+                train_writer.add_scalar(
+                    'lr', scheduler.optimizer.param_groups[0]['lr'], global_step)
+            model.zero_grad()
+            tokens, mask, prefix, token_length, visual_length = tokens.to(device), mask.to(device), prefix.to(
+                device, dtype=torch.float32), token_length.to(device), visual_length.to(device)
+            vn_idxs, vn_len = vn_idxs.to(device), vn_len.to(device)
+            outputs = model(
+                x=prefix,
+                x_length=visual_length,
+                tgt=tokens,
+                tgt_length=token_length,
+                vn_idxs=vn_idxs,
+                vn_len=vn_len
+            )
+            # Back prop and Reseting grads
+            loss = outputs['loss']
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+
+            if args.local_rank == 0:
+                progress.set_postfix({"loss": loss.item()})
+                progress.update()
+                train_writer.add_scalar('loss', loss.item(), global_step)
+                train_writer.add_scalar('inter_loss', outputs['inter_cl'].item(), global_step)
+
+                if (idx + 1) % 1000 == 0:
+                    torch.save(
+                        model.state_dict(),
+                        os.path.join(output_dir, f"{output_prefix}_latest.pt"),
+                    )
+            global_step += 1
+        if args.local_rank == 0:
+            # End of Epoch
+            progress.close()
+
+        # Evaluate
+        is_best = False
+        if (epoch > -1):
+            if args.ngpus > 1:
+                eval_model = model.module
+            else:
+                eval_model = model
+
+            save_results = (epoch % args.save_every ==
+                            0 or epoch == epochs - 1)
+            # evaluate and save result
+            dev_bleu = eval(dataset_dev, eval_model, args, device, split='val', 
+                             save_results=save_results, output_dir=output_dir, output_prefix=f'{epoch:03d}-val')
+            test_bleu = eval(dataset_test, eval_model, args, device, split='test',
+                             save_results=save_results, output_dir=output_dir, output_prefix=f'{epoch:03d}-test')
+
+            if args.local_rank == 0:
+                train_writer.add_scalar('val/BLEU-1', dev_bleu[0], epoch)
+                train_writer.add_scalar('val/BLEU-2', dev_bleu[1], epoch)
+                train_writer.add_scalar('val/BLEU-3', dev_bleu[2], epoch)
+                train_writer.add_scalar('val/BLEU-4', dev_bleu[3], epoch)
+                train_writer.add_scalar('test/BLEU-1', test_bleu[0], epoch)
+                train_writer.add_scalar('test/BLEU-2', test_bleu[1], epoch)
+                train_writer.add_scalar('test/BLEU-3', test_bleu[2], epoch)
+                train_writer.add_scalar('test/BLEU-4', test_bleu[3], epoch)
+
+                if dev_bleu[3] > best_b4:
+                    is_best = True
+                    best_b4 = dev_bleu[3]
+
+            model.train()
+        # Save ckpt periodically|best metric
+        if args.local_rank == 0:
+            # Save checkpoints
+            if is_best:
+                torch.save(
+                    model.state_dict(),
+                    os.path.join(
+                        output_dir, f"best-{best_b4:.4f}-at-{epoch:03d}.pt"),
+                )
+            elif (epoch % args.save_every == 0 or epoch == epochs - 1) and (args.epochs - epoch < 15):
+                torch.save(
+                    model.state_dict(),
+                    os.path.join(
+                        output_dir, f"{output_prefix}-{epoch:03d}.pt"),
+                )
+        # End of one epoch
+    # End of tarining
+    return model
+
+
 def text_to_word_token(text_list, eos_token='.'):
     # remove whitespaces and split words by ' '
     # NOTE: this does not remove special tokens
     return [re.sub(r'[ \n]+', ' ', t.strip().replace(eos_token, '')).split(' ') for t in text_list]
 
 
-def infer_sign2text(dataset, model, args, device, split, save_results: bool = False,
+def eval(dataset, model, args, device, split, save_results: bool = False,
          output_dir: str = ".", output_prefix: str = ""):
     model.eval()
     tokenizer = dataset.tokenizer
     eval_dataloader = DataLoader(
         dataset, batch_size=args.bs, shuffle=False, drop_last=False, num_workers=8)
-
+    # eval_dataloader = DataLoader(dataset, batch_size=args.bs, shuffle=False, drop_last=False)
     gen_text_list = []
     ref_text_list = []
     if args.local_rank == 0:
@@ -289,7 +440,7 @@ def infer_sign2text(dataset, model, args, device, split, save_results: bool = Fa
             B = visual_prefix.shape[0]
             visual_prefix, visual_length = visual_prefix.to(
                 device), visual_length.to(device)
-
+                
             # load reference text
             for b in range(B):
                 label_text = dataset.translation[text_label_index[b].item()]
@@ -305,10 +456,9 @@ def infer_sign2text(dataset, model, args, device, split, save_results: bool = Fa
             hyposis_list = tokenizer.batch_decode(
                 predicted_token_ids, skip_special_tokens=True)
             gen_text_list.extend(hyposis_list)
-
             if args.local_rank == 0:
                 progress.update()
-
+        
     if args.local_rank == 0:
         progress.close()
 
@@ -324,10 +474,15 @@ def infer_sign2text(dataset, model, args, device, split, save_results: bool = Fa
                 f.write(f"{gen_text}|{label_text}\n")
         with open(os.path.join(output_dir, f"{output_prefix}_{split}_eval_tokens.pkl"), 'wb') as f:
             pickle.dump((gen_text_tokens, ref_text_tokens), f)
-    return gen_text_list, ref_text_list, bleu_results
+    return bleu_results
 
-def construct_s2t_model(model_cls, args, distributed=False):
+
+def construct_model(model_cls, args, distributed=False):
     rank = args.local_rank
+    # if rank == 0:
+    #     print('Froze LM:', config_dict['froze_lm'])
+    #     print('Froze Visual Backbone:', config_dict['froze_vb'])
+    # construct model
     generator = AutoRegressiveBeamSearch(
         eos_index=2,
         max_steps=args.max_gen_tks,
@@ -381,7 +536,6 @@ def main():
     parser.add_argument('--weights', type=str, default=None)
     parser.add_argument('--resume', type=int, default=-
                         1, help='epoch to resume from')
-    parser.add_argument('--partial_list_path', type=str, default=None)
     # DDP related
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--ngpus', type=int, default=1,
@@ -390,7 +544,7 @@ def main():
                         help='pass rank info throughout the script, DO NOT input through command line')
     # Datasets
     parser.add_argument('--feat_path', type=str,
-                        help='path to the OpenASL folder')
+                        help='path to the How2Sign pose features folder')
     parser.add_argument('--label_path', type=str,
                         help='path to OpenASL\'s .csv label file')
     parser.add_argument('--clip_length', type=int, default=10,
@@ -405,7 +559,6 @@ def main():
                         help='max generated token number for decoder')
     parser.add_argument('--num_beams', type=int, default=5,
                         help='number of beams for beam search during inference')
-
     # Model related arguments
     parser = TransBaseModel.add_args(parser)  # add model related arguments
     args = parser.parse_args()
@@ -421,7 +574,7 @@ def main():
         torch.cuda.set_device(args.local_rank)
     else:
         # on process, treat as the master process
-        # args.local_rank = 0
+        args.local_rank = 0
         distributed = False
 
     # Ensure each process has the same initialization
@@ -445,19 +598,18 @@ def main():
 
     # [Lauch running process]
     if args.phase == 'train':
-        pass
         # [Init datasets]
-        # dataset = OpenASLPoseDataset(vars(args), tokenizer=tokenizer, phase='train', split='train')
-        # dataset_dev = OpenASLPoseDataset(vars(args), tokenizer=tokenizer, phase='test', split='valid')
-        # dataset_test = OpenASLPoseDataset(vars(args), tokenizer=tokenizer, phase='test', split='test')
+        dataset = How2SignPoseDataset(vars(args), tokenizer=tokenizer, phase='train', split='train')
+        dataset_dev = How2SignPoseDataset(vars(args), tokenizer=tokenizer, phase='test', split='val')
+        dataset_test = How2SignPoseDataset(vars(args), tokenizer=tokenizer, phase='test', split='test')
 
-        # # pass the namespace as a dict
-        # model = construct_s2t_model(model_cls, args, distributed)
-        # if weights:
-        #     model.load_state_dict(weights)
+        # pass the namespace as a dict
+        model = construct_model(model_cls, args, distributed)
+        if weights:
+            model.load_state_dict(weights)
 
-        # train((dataset, dataset_dev, dataset_test), model, args, output_dir=output_dir,
-        #       output_prefix=args.prefix, warmup_steps=args.warm_up, lr=args.lr)
+        train((dataset, dataset_dev, dataset_test), model, args, output_dir=output_dir,
+              output_prefix=args.prefix, warmup_steps=args.warm_up, lr=args.lr)
     elif args.phase == 'test':
         assert weights is not None, f'{args.weights} dose not exist'
         # load experiment config json file
@@ -467,7 +619,7 @@ def main():
             json_path = os.path.join(output_dir, f"exp_config.json")
         config = json.load(open(json_path, 'r'))
         # construct model
-        model_s2t = construct_s2t_model(model_cls, edict(config), distributed)
+        model = construct_model(model_cls, edict(config), distributed)
 
         # >>>>>> HACK
         from collections import OrderedDict
@@ -479,28 +631,17 @@ def main():
         weights = new_state_dict
         # >>>>>>
 
-        model_s2t.load_state_dict(weights, strict=False)
+        model.load_state_dict(weights, strict=False)
+        dataset_valid = How2SignPoseDataset(
+            config, tokenizer=tokenizer, phase='test', split='val')
+        dataset_test = How2SignPoseDataset(
+            config, tokenizer=tokenizer, phase='test', split='test')
+        device = torch.device(f'cuda:{args.local_rank}')
+        eval(dataset_valid, model, args, device, 'valid', save_results=True,
+             output_dir=output_dir, output_prefix=args.prefix)
+        eval(dataset_test, model, args, device, 'test', save_results=True,
+             output_dir=output_dir, output_prefix=args.prefix)
 
-        if args.partial_list_path == None:
-            dataset_valid = OpenASLPoseDataset(
-                config, tokenizer=tokenizer, phase='test', split='valid')
-            dataset_test = OpenASLPoseDataset(
-                config, tokenizer=tokenizer, phase='test', split='test')
-            device = torch.device(f'cuda:{args.local_rank}')
-            eval(dataset_valid, model_s2t, args, device, 'valid', save_results=True,
-                output_dir=output_dir, output_prefix=f'{args.prefix}-valid')
-            eval(dataset_test, model_s2t, args, device, 'test', save_results=True,
-                output_dir=output_dir, output_prefix=f'{args.prefix}-test')
-        else:
-            print("list:", args.partial_list_path)
-            dataset = OpenASLPoseDataset(
-                config, tokenizer=tokenizer, phase='test', partial_list_path=args.partial_list_path
-            )
-            device = torch.device(f'cuda:{args.local_rank}')
-            print(device)
-            gen_text_list, ref_text_list, bleu_results =\
-                infer_sign2text(dataset, model_s2t, args, device, 'test', save_results=True,
-                                output_dir=output_dir, output_prefix=f'{args.prefix}-test-mini')
 
 
 if __name__ == '__main__':

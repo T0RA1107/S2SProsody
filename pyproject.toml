@@ -1,65 +1,43 @@
 [tool.poetry]
-name = "pytorch_template"
+name = "s2sprosody"
 version = "0.1.0"
-description = "pytorch project template"
-authors = ["yiskw713"]
-license = "MIT"
+description = ""
+authors = ["T0RA <torapira@icloud.com>"]
+readme = "README.md"
+
+packages = [
+    { include = "FastSpeech2", from = "src/comparison" },
+    { include = "GloFE", from = "src/comparison" },
+]
 
 [tool.poetry.dependencies]
-python = "^3.9"
-Pillow = "^9.0.1"
-PyYAML = "^6.0"
-numpy = "^1.22.3"
-pandas = "^1.4.1"
-wandb = "^0.12.11"
-hiddenlayer = "^0.3"
-graphviz = "^0.19.1"
-opencv-python = "^4.5.5"
-pydantic = "^1.9.0"
+python = "3.9.0"
+pandas = "2.2.2"
+transformers = "4.43.4"
+tensorboardX = "2.6.2.2"
+einops = "0.8.0"
+torchvision = "0.14.1"
+torchaudio = "0.13.1"
+cuda-python = "11.8.0"
+g2p-en = "2.1.0"
+inflect = "4.1.0"
+librosa = "0.7.2"
+matplotlib = "3.2.2"
+numba = "^0.60.0"
+numpy = "1.22.4"
+pypinyin = "0.39.0"
+pyworld = "^0.3.4"
+PyYAML = "6.0"
+scikit-learn = "0.24.0"
+scipy = "1.7.2"
+soundfile = "0.10.3.post1"
+tensorboard = "2.2.2"
+tgt = "1.4.4"
+torch = "1.13.1"
+tqdm = "4.46.1"
+Unidecode = "1.1.1"
 
-[tool.poetry.dev-dependencies]
-black = "^22.1.0"
-flake8 = "^4.0.1"
-isort = "^5.10.1"
-mypy = "^0.931"
-pytest = "^7.0.1"
-pytest-cov = "^3.0.0"
-pytest-mock = "^3.7.0"
-jupyterlab = "^3.3.0"
-bandit = "^1.7.4"
-poethepoet = "^0.13.1"
-flake8-bugbear = "22.1.11"
-flake8-builtins = "1.5.3"
-flake8-eradicate = "1.2.0"
-pep8-naming = "0.12.1"
-flake8-expression-complexity = "0.0.10"
-flake8-cognitive-complexity = "0.1.0"
-flake8-pytest-style = "1.6.0"
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
+requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-[tool.isort]
-ensure_newline_before_comments = true
-force_grid_wrap = 0
-include_trailing_comma = true
-line_length = 88
-multi_line_output = 3
-use_parentheses = true
-
-[tool.poe.tasks]
-install_sklearn = """
-    pip install \
-        scipy==1.7.3 \
-        scikit-learn
-"""
-
-install_torch = """
-    pip install \
-        torch==1.10.2 \
-        torchvision \
-        timm \
-        torchinfo \
-        imgaug \
-"""

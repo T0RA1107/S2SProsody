@@ -2,11 +2,11 @@ python sign2speech.py \
     --ngpus 1 \
     --work_dir_prefix "/home/ubuntu/slocal/S2SProsody/src" \
     --work_dir "vn_model" \
-    --tokenizer "/home/ubuntu/slocal/S2SProsody/src/comparison/GloFE/GloFE/notebooks/openasl-v1.0/openasl-bpe25000-tokenizer-uncased" \
+    --tokenizer "/home/ubuntu/slocal/S2SProsody/src/comparison/GloFE/notebooks/openasl-v1.0/openasl-bpe25000-tokenizer-uncased" \
     --bs 32 \
     --prefix test-vn \
-    --phase test --weights "/home/ubuntu/slocal/S2SProsody/src/comparison/GloFE/GloFE/vn_model/glofe_vn_openasl.pt" \
+    --phase test --weights "/home/ubuntu/slocal/S2SProsody/src/comparison/GloFE/vn_model/glofe_vn_openasl.pt" \
     --local_rank 0 \
     --label_path "/home/ubuntu/slocal/S2SProsody/data/OpenASL/data/openasl-v1.0.tsv" \
     --feat_path "/home/ubuntu/slocal/S2SProsody/data/OpenASL/data/mmpose" \
-    --partial_list_path "/home/ubuntu/slocal/S2SProsody/src/comparison/GloFE/GloFE/tools/open_asl_mini.txt"
+    --partial_list_path "/home/ubuntu/slocal/S2SProsody/src/comparison/GloFE/tools/open_asl_mini.txt"

@@ -1,0 +1,152 @@
+Looking in indexes: https://pypi.org/simple, https://pypi.ngc.nvidia.com
+Collecting mmcv==1.6.2
+  Downloading mmcv-1.6.2.tar.gz (575 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 575.1/575.1 kB 28.8 MB/s eta 0:00:00
+  Preparing metadata (setup.py): started
+  Preparing metadata (setup.py): finished with status 'done'
+Collecting mmdet==2.25.2
+  Downloading mmdet-2.25.2-py3-none-any.whl.metadata (20 kB)
+Collecting mmtrack
+  Downloading mmtrack-0.14.0-py3-none-any.whl.metadata (12 kB)
+Collecting xtcocotools==1.12
+  Downloading xtcocotools-1.12-cp38-cp38-manylinux1_x86_64.whl.metadata (416 bytes)
+Collecting addict (from mmcv==1.6.2)
+  Downloading addict-2.4.0-py3-none-any.whl.metadata (1.0 kB)
+Requirement already satisfied: numpy in /home/ubuntu/anaconda3/envs/glofe/lib/python3.8/site-packages (from mmcv==1.6.2) (1.24.4)
+Requirement already satisfied: packaging in /home/ubuntu/anaconda3/envs/glofe/lib/python3.8/site-packages (from mmcv==1.6.2) (24.1)
+Requirement already satisfied: Pillow in /home/ubuntu/anaconda3/envs/glofe/lib/python3.8/site-packages (from mmcv==1.6.2) (8.3.2)
+Requirement already satisfied: pyyaml in /home/ubuntu/anaconda3/envs/glofe/lib/python3.8/site-packages (from mmcv==1.6.2) (6.0.1)
+Collecting yapf (from mmcv==1.6.2)
+  Downloading yapf-0.40.2-py3-none-any.whl.metadata (45 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 45.4/45.4 kB 190.2 MB/s eta 0:00:00
+Collecting opencv-python>=3 (from mmcv==1.6.2)
+  Downloading opencv_python-4.10.0.84-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (20 kB)
+Collecting matplotlib (from mmdet==2.25.2)
+  Downloading matplotlib-3.7.5-cp38-cp38-manylinux_2_12_x86_64.manylinux2010_x86_64.whl.metadata (5.7 kB)
+Collecting pycocotools (from mmdet==2.25.2)
+  Downloading pycocotools-2.0.7-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (1.1 kB)
+Requirement already satisfied: six in /home/ubuntu/anaconda3/envs/glofe/lib/python3.8/site-packages (from mmdet==2.25.2) (1.16.0)
+Collecting terminaltables (from mmdet==2.25.2)
+  Downloading terminaltables-3.1.10-py2.py3-none-any.whl.metadata (3.5 kB)
+Requirement already satisfied: setuptools>=18.0 in /home/ubuntu/anaconda3/envs/glofe/lib/python3.8/site-packages (from xtcocotools==1.12) (69.5.1)
+Collecting cython>=0.27.3 (from xtcocotools==1.12)
+  Downloading Cython-3.0.10-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (3.2 kB)
+Collecting attributee (from mmtrack)
+  Downloading attributee-0.1.9.tar.gz (11 kB)
+  Preparing metadata (setup.py): started
+  Preparing metadata (setup.py): finished with status 'done'
+Collecting dotty-dict (from mmtrack)
+  Downloading dotty_dict-1.3.1-py3-none-any.whl.metadata (5.3 kB)
+Collecting lap (from mmtrack)
+  Downloading lap-0.4.0.tar.gz (1.5 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.5/1.5 MB 133.3 MB/s eta 0:00:00
+  Preparing metadata (setup.py): started
+  Preparing metadata (setup.py): finished with status 'done'
+Collecting mmcls<1.0.0,>=0.16.0 (from mmtrack)
+  Downloading mmcls-0.25.0-py2.py3-none-any.whl.metadata (14 kB)
+Collecting motmetrics (from mmtrack)
+  Downloading motmetrics-1.4.0-py3-none-any.whl.metadata (20 kB)
+Collecting pandas<=1.3.5 (from mmtrack)
+  Downloading pandas-1.3.5-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (12 kB)
+Collecting scipy<=1.7.3 (from mmtrack)
+  Downloading scipy-1.7.3-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (2.2 kB)
+Collecting seaborn (from mmtrack)
+  Downloading seaborn-0.13.2-py3-none-any.whl.metadata (5.4 kB)
+Requirement already satisfied: tqdm in /home/ubuntu/anaconda3/envs/glofe/lib/python3.8/site-packages (from mmtrack) (4.66.4)
+Collecting contourpy>=1.0.1 (from matplotlib->mmdet==2.25.2)
+  Downloading contourpy-1.1.1-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (5.9 kB)
+Collecting cycler>=0.10 (from matplotlib->mmdet==2.25.2)
+  Downloading cycler-0.12.1-py3-none-any.whl.metadata (3.8 kB)
+Collecting fonttools>=4.22.0 (from matplotlib->mmdet==2.25.2)
+  Downloading fonttools-4.53.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (162 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 162.2/162.2 kB 403.0 MB/s eta 0:00:00
+Collecting kiwisolver>=1.0.1 (from matplotlib->mmdet==2.25.2)
+  Downloading kiwisolver-1.4.5-cp38-cp38-manylinux_2_5_x86_64.manylinux1_x86_64.whl.metadata (6.4 kB)
+Collecting pyparsing>=2.3.1 (from matplotlib->mmdet==2.25.2)
+  Downloading pyparsing-3.1.2-py3-none-any.whl.metadata (5.1 kB)
+Requirement already satisfied: python-dateutil>=2.7 in /home/ubuntu/anaconda3/envs/glofe/lib/python3.8/site-packages (from matplotlib->mmdet==2.25.2) (2.9.0.post0)
+Collecting importlib-resources>=3.2.0 (from matplotlib->mmdet==2.25.2)
+  Downloading importlib_resources-6.4.0-py3-none-any.whl.metadata (3.9 kB)
+Requirement already satisfied: pytz>=2017.3 in /home/ubuntu/anaconda3/envs/glofe/lib/python3.8/site-packages (from pandas<=1.3.5->mmtrack) (2024.1)
+Collecting numpy (from mmcv==1.6.2)
+  Downloading numpy-1.22.4-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (2.0 kB)
+Collecting xmltodict>=0.12.0 (from motmetrics->mmtrack)
+  Downloading xmltodict-0.13.0-py2.py3-none-any.whl.metadata (7.7 kB)
+Collecting importlib-metadata>=6.6.0 (from yapf->mmcv==1.6.2)
+  Downloading importlib_metadata-8.0.0-py3-none-any.whl.metadata (4.6 kB)
+Collecting platformdirs>=3.5.1 (from yapf->mmcv==1.6.2)
+  Downloading platformdirs-4.2.2-py3-none-any.whl.metadata (11 kB)
+Collecting tomli>=2.0.1 (from yapf->mmcv==1.6.2)
+  Downloading tomli-2.0.1-py3-none-any.whl.metadata (8.9 kB)
+Collecting zipp>=0.5 (from importlib-metadata>=6.6.0->yapf->mmcv==1.6.2)
+  Downloading zipp-3.19.2-py3-none-any.whl.metadata (3.6 kB)
+Downloading mmdet-2.25.2-py3-none-any.whl (1.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.4/1.4 MB 98.5 MB/s eta 0:00:00
+Downloading xtcocotools-1.12-cp38-cp38-manylinux1_x86_64.whl (314 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 314.1/314.1 kB 198.7 MB/s eta 0:00:00
+Downloading mmtrack-0.14.0-py3-none-any.whl (400 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 400.4/400.4 kB 10.3 MB/s eta 0:00:00
+Downloading Cython-3.0.10-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.6/3.6 MB 44.4 MB/s eta 0:00:00
+Downloading matplotlib-3.7.5-cp38-cp38-manylinux_2_12_x86_64.manylinux2010_x86_64.whl (9.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 9.2/9.2 MB 32.9 MB/s eta 0:00:00
+Downloading mmcls-0.25.0-py2.py3-none-any.whl (648 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 648.8/648.8 kB 45.9 MB/s eta 0:00:00
+Downloading opencv_python-4.10.0.84-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (62.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 62.5/62.5 MB 69.7 MB/s eta 0:00:00
+Downloading pandas-1.3.5-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (11.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 11.5/11.5 MB 73.5 MB/s eta 0:00:00
+Downloading scipy-1.7.3-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (39.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 39.3/39.3 MB 36.7 MB/s eta 0:00:00
+Downloading numpy-1.22.4-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (16.9 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.9/16.9 MB 95.0 MB/s eta 0:00:00
+Downloading addict-2.4.0-py3-none-any.whl (3.8 kB)
+Downloading dotty_dict-1.3.1-py3-none-any.whl (7.0 kB)
+Downloading motmetrics-1.4.0-py3-none-any.whl (161 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 161.5/161.5 kB 274.9 MB/s eta 0:00:00
+Downloading pycocotools-2.0.7-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (439 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 439.5/439.5 kB 187.2 MB/s eta 0:00:00
+Downloading seaborn-0.13.2-py3-none-any.whl (294 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 294.9/294.9 kB 128.1 MB/s eta 0:00:00
+Downloading terminaltables-3.1.10-py2.py3-none-any.whl (15 kB)
+Downloading yapf-0.40.2-py3-none-any.whl (254 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 254.7/254.7 kB 125.8 MB/s eta 0:00:00
+Downloading contourpy-1.1.1-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (301 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 301.1/301.1 kB 162.1 MB/s eta 0:00:00
+Downloading cycler-0.12.1-py3-none-any.whl (8.3 kB)
+Downloading fonttools-4.53.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (4.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.7/4.7 MB 97.3 MB/s eta 0:00:00
+Downloading importlib_metadata-8.0.0-py3-none-any.whl (24 kB)
+Downloading importlib_resources-6.4.0-py3-none-any.whl (38 kB)
+Downloading kiwisolver-1.4.5-cp38-cp38-manylinux_2_5_x86_64.manylinux1_x86_64.whl (1.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.2/1.2 MB 103.2 MB/s eta 0:00:00
+Downloading platformdirs-4.2.2-py3-none-any.whl (18 kB)
+Downloading pyparsing-3.1.2-py3-none-any.whl (103 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 103.2/103.2 kB 163.1 MB/s eta 0:00:00
+Downloading tomli-2.0.1-py3-none-any.whl (12 kB)
+Downloading xmltodict-0.13.0-py2.py3-none-any.whl (10.0 kB)
+Downloading zipp-3.19.2-py3-none-any.whl (9.0 kB)
+Building wheels for collected packages: mmcv, attributee, lap
+  Building wheel for mmcv (setup.py): started
+  Building wheel for mmcv (setup.py): finished with status 'done'
+  Created wheel for mmcv: filename=mmcv-1.6.2-py2.py3-none-any.whl size=880261 sha256=aa6124c0f82952b5768f75e9e538322bea044dac0160d8a173b94f64aa61553e
+  Stored in directory: /tmp/pip-ephem-wheel-cache-1tp9bao7/wheels/ca/85/86/73b1c530af03c5ccc9ce90d3d3aa428f2ab82c434215a522c3
+  Building wheel for attributee (setup.py): started
+  Building wheel for attributee (setup.py): finished with status 'done'
+  Created wheel for attributee: filename=attributee-0.1.9-py3-none-any.whl size=13104 sha256=7c6e4189546103187f01fdb41bf9d189de0c264a5424db22a3db43fe2e3815b6
+  Stored in directory: /tmp/pip-ephem-wheel-cache-1tp9bao7/wheels/2d/8c/f1/8a3ff8ac7bf7d260f4be044fe6de5a7319d25053f2591d6f93
+  Building wheel for lap (setup.py): started
+  Building wheel for lap (setup.py): finished with status 'done'
+  Created wheel for lap: filename=lap-0.4.0-cp38-cp38-linux_x86_64.whl size=1663296 sha256=0c2ec68094eb847ebfca65a04dbfc6d05c3858268fe46c524c9f299e9020ae16
+  Stored in directory: /tmp/pip-ephem-wheel-cache-1tp9bao7/wheels/86/ec/8a/2baa6fb3ea3a3bdc40a9c2c4b8957b5b544f207531f7a78a89
+Successfully built mmcv attributee lap
+Installing collected packages: lap, addict, zipp, xmltodict, tomli, terminaltables, pyparsing, platformdirs, numpy, kiwisolver, fonttools, dotty-dict, cython, cycler, attributee, scipy, pandas, opencv-python, importlib-resources, importlib-metadata, contourpy, yapf, motmetrics, matplotlib, xtcocotools, seaborn, pycocotools, mmcv, mmcls, mmtrack, mmdet
+  Attempting uninstall: numpy
+    Found existing installation: numpy 1.24.4
+    Uninstalling numpy-1.24.4:
+      Successfully uninstalled numpy-1.24.4
+  Attempting uninstall: pandas
+    Found existing installation: pandas 2.0.3
+    Uninstalling pandas-2.0.3:
+      Successfully uninstalled pandas-2.0.3
+Successfully installed addict-2.4.0 attributee-0.1.9 contourpy-1.1.1 cycler-0.12.1 cython-3.0.10 dotty-dict-1.3.1 fonttools-4.53.0 importlib-metadata-8.0.0 importlib-resources-6.4.0 kiwisolver-1.4.5 lap-0.4.0 matplotlib-3.7.5 mmcls-0.25.0 mmcv-1.6.2 mmdet-2.25.2 mmtrack-0.14.0 motmetrics-1.4.0 numpy-1.22.4 opencv-python-4.10.0.84 pandas-1.3.5 platformdirs-4.2.2 pycocotools-2.0.7 pyparsing-3.1.2 scipy-1.7.3 seaborn-0.13.2 terminaltables-3.1.10 tomli-2.0.1 xmltodict-0.13.0 xtcocotools-1.12 yapf-0.40.2 zipp-3.19.2
