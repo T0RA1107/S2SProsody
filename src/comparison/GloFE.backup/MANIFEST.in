@@ -1,6 +1,0 @@
-recursive-include GloFE/notebooks/ *.json
-recursive-include GloFE/notebooks/ *.pkl
-recursive-include GloFE/notebooks/ *.txt
-include GloFE/vn_model/exp_config.json GloFE/vn_model/glofe_vn_openasl.pt
-recursive-include GloFE/models/ckpt/ *
-global-exclude *__pycache__*
