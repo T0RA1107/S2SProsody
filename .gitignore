@@ -17,7 +17,6 @@ wandb_result
 .mypy_cache
 .coverage*
 .pytest_cache
-.vscode
 
 !tests/sample/*.jpg
 !src/imgs/*.png

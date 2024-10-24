@@ -1,236 +1,187 @@
 import argparse
-import datetime
 import os
-import time
-from logging import DEBUG, INFO, basicConfig, getLogger
+import datetime
 
+import soundfile as sf
 import torch
-import torch.optim as optim
+import yaml
+import torch.nn as nn
+from torch.utils.data import DataLoader
+# from torch.utils.tensorboard import SummaryWriter
 import wandb
-from torchvision.transforms import (
-    ColorJitter,
-    Compose,
-    Normalize,
-    RandomHorizontalFlip,
-    RandomResizedCrop,
-    ToTensor,
-)
+from tqdm import tqdm
 
-from libs.checkpoint import resume, save_checkpoint
-from libs.class_id_map import get_cls2id_map
-from libs.config import get_config
-from libs.dataset import get_dataloader
-from libs.device import get_device
-from libs.helper import evaluate, train
-from libs.logger import TrainLogger
-from libs.loss_fn import get_criterion
-from libs.mean_std import get_mean, get_std
-from libs.models import get_model
-from libs.seed import set_seed
+from FastSpeech2.evaluate import evaluate
+from FastSpeech2.utils.model import get_vocoder, vocoder_infer
 
-logger = getLogger(__name__)
+from models.semi_cycle_gan import SemiCycleGANModel
+from dataset import UnpairedAudioSignDataset
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def get_arguments() -> argparse.Namespace:
-    """parse all the arguments from command line inteface return a list of
-    parsed arguments."""
+def main(args, configs, configs_ft):
+    print("Prepare training ...")
 
-    parser = argparse.ArgumentParser(
-        description="""
-        train a network for image classification with Flowers Recognition Dataset.
-        """
-    )
-    parser.add_argument("config", type=str, help="path of a config file")
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Add --resume option if you start training from checkpoint.",
-    )
-    parser.add_argument(
-        "--use_wandb",
-        action="store_true",
-        help="Add --use_wandb option if you want to use wandb.",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Add --debug option if you want to see debug-level logs.",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=0,
-        help="random seed",
-    )
+    preprocess_config, model_config, train_config = configs
 
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = get_arguments()
-
-    # save log files in the directory which contains config file.
-    result_path = os.path.dirname(args.config)
-    experiment_name = os.path.basename(result_path)
-
-    # setting logger configuration
-    logname = os.path.join(result_path, f"{datetime.datetime.now():%Y-%m-%d}_train.log")
-    basicConfig(
-        level=DEBUG if args.debug else INFO,
-        format="[%(asctime)s] %(name)s %(levelname)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        filename=logname,
-    )
-
-    # fix seed
-    set_seed()
-
-    # configuration
-    config = get_config(args.config)
-
-    # cpu or cuda
-    device = get_device(allow_only_gpu=False)
-
-    # Dataloader
-    train_transform = Compose(
-        [
-            RandomResizedCrop(size=(config.height, config.width)),
-            RandomHorizontalFlip(),
-            ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
-            ToTensor(),
-            Normalize(mean=get_mean(), std=get_std()),
-        ]
-    )
-
-    val_transform = Compose([ToTensor(), Normalize(mean=get_mean(), std=get_std())])
-
-    train_loader = get_dataloader(
-        config.dataset_name,
-        "train",
-        batch_size=config.batch_size,
+    dataset = UnpairedAudioSignDataset(
+        "train.txt", preprocess_config, train_config, args)  # create a dataset given opt.dataset_mode and other options
+    if "speaker_num" not in model_config:
+        model_config["speaker_num"] = dataset.speaker_num
+    dataset_size = len(dataset)    # get the number of images in the dataset.
+    batch_size = train_config["optimizer"]["batch_size"]
+    group_size = 4
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size * group_size,
         shuffle=True,
-        num_workers=config.num_workers,
-        pin_memory=True,
-        drop_last=True,
-        transform=train_transform,
+        collate_fn=dataset.collate_fn,
     )
+    print('The number of training images = %d' % dataset_size)
 
-    val_loader = get_dataloader(
-        config.dataset_name,
-        "val",
-        batch_size=1,
-        shuffle=False,
-        num_workers=config.num_workers,
-        pin_memory=True,
-        transform=val_transform,
-    )
+    model = SemiCycleGANModel(args, preprocess_config, model_config, train_config, configs_ft)      # create a model given opt.model and other options
+    model.setup(train_config)               # regular setup: load and print networks; create schedulers
+    total_iters = 0                # the total number of training iterations
 
-    # the number of classes
-    n_classes = len(get_cls2id_map())
+    vocoder = get_vocoder(model_config, device)
 
-    # define a model
-    model = get_model(config.model, n_classes, pretrained=config.pretrained)
+    dt_now = datetime.datetime.now()
+    run_name = dt_now.strftime('%m:%d:%H:%M')
+    run_dir = f"./output/{run_name}/"
+    os.makedirs(run_dir, exist_ok=True)
+    os.makedirs(run_dir + "wav_preds/", exist_ok=True)
+    pred_txt_file = run_dir + "wav_preds/pred.txt"
 
-    # send the model to cuda/cpu
-    model.to(device)
-
-    optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
-
-    # keep training and validation log
-    begin_epoch = 0
-    best_loss = float("inf")
-
-    # resume if you want
-    if args.resume:
-        resume_path = os.path.join(result_path, "checkpoint.pth")
-        begin_epoch, model, optimizer, best_loss = resume(resume_path, model, optimizer)
-
-    log_path = os.path.join(result_path, "log.csv")
-    train_logger = TrainLogger(log_path, resume=args.resume)
-
-    # criterion for loss
-    criterion = get_criterion(config.use_class_weight, config.dataset_name, device)
-
-    # Weights and biases
     if args.use_wandb:
         wandb.init(
-            name=experiment_name,
-            config=config,
-            project="image_classification_template",
+            project='Sign2Speech',
+            group="w/o reconstruction S2S GAN",
             job_type="training",
-            dirs="./wandb_result/",
+            name=run_name,
+            config={
+                "preprocess": preprocess_config,
+                "model": model_config,
+                "train": train_config
+            },
         )
-        # Magic
-        wandb.watch(model, log="all")
+        table = wandb.Table(columns=["translation", "Speech"])
 
-    # train and validate model
-    logger.info("Start training.")
+    grad_acc_step = train_config["optimizer"]["grad_acc_step"]
+    grad_clip_thresh = train_config["optimizer"]["grad_clip_thresh"]
+    total_step = train_config["step"]["total_step"]
+    n_epochs_decay = train_config["step"]["n_epochs_decay"]
+    step_count = train_config["step"]["step_count"]
+    log_step = train_config["step"]["log_step"]
+    save_step = train_config["step"]["save_step"]
+    synth_step = train_config["step"]["synth_step"]
+    val_step = train_config["step"]["val_step"]
+    sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
+    assert synth_step % log_step == 0
+    assert val_step % log_step == 0
 
-    for epoch in range(begin_epoch, config.max_epoch):
-        # training
-        start = time.time()
-        train_loss, train_acc1, train_f1s = train(
-            train_loader, model, criterion, optimizer, epoch, device
-        )
-        train_time = int(time.time() - start)
+    for epoch in tqdm(range(step_count, total_step + n_epochs_decay + 1), desc="Training"):    # outer loop for different epochs; we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>
+        epoch_iter = 0                  # the number of training iterations in current epoch, reset to 0 every epoch
+        model.update_learning_rate()    # update learning rates in the beginning of every epoch.
+        for batchs in tqdm(loader, leave=False, desc=f"EPOCH {epoch}"):  # inner loop within one epoch
+            for batch in batchs:
 
-        # validation
-        start = time.time()
-        val_loss, val_acc1, val_f1s, c_matrix = evaluate(
-            val_loader, model, criterion, device
-        )
-        val_time = int(time.time() - start)
+                total_iters += len(batch)
+                epoch_iter += len(batch)
+                model.set_input(batch)         # unpack data from dataset and apply preprocessing
+                model.optimize_parameters()   # calculate loss functions, get gradients, update network weights
 
-        # save a model if top1 acc is higher than ever
-        if best_loss > val_loss:
-            best_loss = val_loss
-            torch.save(
-                model.state_dict(),
-                os.path.join(result_path, "best_model.prm"),
-            )
 
-        # save checkpoint every epoch
-        save_checkpoint(result_path, epoch, model, optimizer, best_loss)
+                if total_iters % log_step == 0:    # print training losses and save logging information to the disk
+                    log = {}
 
-        # write logs to dataframe and csv file
-        train_logger.update(
-            epoch,
-            optimizer.param_groups[0]["lr"],
-            train_time,
-            train_loss,
-            train_acc1,
-            train_f1s,
-            val_time,
-            val_loss,
-            val_acc1,
-            val_f1s,
-        )
+                    loss_G = model.loss_G_audio
+                    loss_D = model.loss_D_audio
 
-        # save logs to wandb
-        if args.use_wandb:
-            wandb.log(
-                {
-                    "lr": optimizer.param_groups[0]["lr"],
-                    "train_time[sec]": train_time,
-                    "train_loss": train_loss,
-                    "train_acc@1": train_acc1,
-                    "train_f1s": train_f1s,
-                    "val_time[sec]": val_time,
-                    "val_loss": val_loss,
-                    "val_acc@1": val_acc1,
-                    "val_f1s": val_f1s,
-                },
-                step=epoch,
-            )
+                    log["loss/G_audio"] = loss_G
+                    log["loss/D_audio"] = loss_D
 
-    # save models
-    torch.save(model.state_dict(), os.path.join(result_path, "final_model.prm"))
+                if total_iters % synth_step == 0:
+                    output = model.fake_audio
+                    output_lens = model.fake_audio_lens
+                    raw_text = model.fake_raw_texts[0]
+                    mel_len = output_lens[0].item()
+                    mel_prediction = output[0, :, :mel_len].detach().transpose(1, 2)
+                    wav_prediction = vocoder_infer(
+                        mel_prediction,
+                        vocoder,
+                        model_config,
+                        preprocess_config,
+                    )[0]
+                    # audio = wandb.Audio(
+                    #     wav_prediction / max(abs(wav_prediction)),
+                    #     sample_rate=sampling_rate)
+                    sf.write(
+                        run_dir + f"wav_preds/synth_{total_iters // synth_step}.wav",
+                        wav_prediction, samplerate=sampling_rate)
+                    with open(pred_txt_file, "a") as f:
+                        f.write(raw_text + "\n")
 
-    # delete checkpoint
-    os.remove(os.path.join(result_path, "checkpoint.pth"))
+                    # table.add_data(raw_text, audio)
+                    # log["Training"] = table
 
-    logger.info("Done")
+                if args.use_wandb and total_iters % log_step == 0:
+                    wandb.log(log)
+
+                    # visualizer.plot_current_losses(epoch, float(epoch_iter) / dataset_size, losses)
+
+                # if total_iters % save_step == 0:   # cache our latest model every <save_latest_freq> iterations
+                #     print('saving the latest model (epoch %d, total_iters %d)' % (epoch, total_iters))
+                #     save_suffix = 'iter_%d' % total_iters
+                #     model.save_networks(save_suffix)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--restore_step", type=int, default=0)
+    parser.add_argument(
+        "-p",
+        "--preprocess_config",
+        type=str,
+        required=True,
+        help="path to preprocess.yaml",
+    )
+    parser.add_argument(
+        "-m", "--model_config", type=str, required=True, help="path to model.yaml"
+    )
+    parser.add_argument(
+        "-t", "--train_config", type=str, required=True, help="path to train.yaml"
+    )
+    parser.add_argument(
+        "--isTrain", action="store_true"
+    )
+    parser.add_argument(
+        "--use_wandb", action="store_true"
+    )
+    parser.add_argument(
+        "--fine_tuning", action="store_true"
+    )
+    parser.add_argument(
+        "--restore_step_ft", type=int
+    )
+    args = parser.parse_args()
+
+    # Read Config
+    preprocess_config = yaml.load(
+        open(args.preprocess_config, "r"), Loader=yaml.FullLoader
+    )
+    model_config = yaml.load(open(args.model_config, "r"), Loader=yaml.FullLoader)
+    train_config = yaml.load(open(args.train_config, "r"), Loader=yaml.FullLoader)
+    configs = (preprocess_config, model_config, train_config)
+    configs_ft = None
+    if args.fine_tuning:
+        ft_config_path = train_config["fine-tuning"]
+        preprocess_config_ft = yaml.load(open(
+            os.path.join(ft_config_path, "preprocess.yaml"), "r"), Loader=yaml.FullLoader)
+        model_config_ft = yaml.load(open(
+            os.path.join(ft_config_path, "model.yaml"), "r"), Loader=yaml.FullLoader)
+        train_config_ft = yaml.load(open(
+            os.path.join(ft_config_path, "train.yaml"), "r"), Loader=yaml.FullLoader)
+        configs_ft = (preprocess_config_ft, model_config_ft, train_config_ft)
+
+    main(args, configs, configs_ft)
