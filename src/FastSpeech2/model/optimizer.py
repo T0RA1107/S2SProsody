@@ -17,7 +17,7 @@ class ScheduledOptim:
         self.anneal_steps = train_config["optimizer"]["anneal_steps"]
         self.anneal_rate = train_config["optimizer"]["anneal_rate"]
         self.current_step = current_step
-        if not isinstance(train_config["optimizer"]["lr"], int):
+        if not isinstance(train_config["optimizer"]["lr"], float):
             self.init_lr = np.power(model_config["transformer"]["encoder_hidden"], -0.5)
         else:
             self.init_lr = train_config["optimizer"]["lr"]

@@ -132,6 +132,13 @@ def main(args, configs, configs_ft=None):
 
                     log_at_wandb(log, losses=losses)
 
+                    # log the distribution of predict audio length
+                    length = output[9]
+                    mean = torch.mean(length)
+                    var = torch.mean((length - mean) ** 2.)
+                    log["length/mean"] = mean
+                    log["length/var"] = var
+
                 if step % synth_step == 0:
                     fig, wav_reconstruction, wav_prediction, tag = synth_one_sample(
                         batch,

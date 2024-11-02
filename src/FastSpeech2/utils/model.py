@@ -53,14 +53,27 @@ def get_model(args, configs, device, configs_ft=None, train=False):
                     n_speaker,
                     model_config["transformer"]["encoder_hidden"],
                 ).to(device)
-                for param_group in scheduled_optim._optimizer.param_groups:
-                    if param_group["params"] == model.speaker_emb.parameters():
-                        if isinstance(train_config["optimizer"]["lr_fine-tuning"], int):
-                            param_group["init_lr"] = train_config["optimizer"]["lr_fine-tuning"]
-                            param_group["lr"] = train_config["optimizer"]["lr_fine-tuning"]
-                        else:
-                            param_group["init_lr"] = scheduled_optim.init_lr
-                            param_group["lr"] = scheduled_optim.ini
+                emb_params = []
+                other_params = []
+                for name, param in model.named_parameters():
+                    if name == "speaker_emb.weight":
+                        emb_params.append(param)
+                    else:
+                        other_params.append(param)
+                if isinstance(train_config["optimizer"]["lr"], float):
+                    _optimizer = torch.optim.Adam(
+                        [{ "params": emb_params,
+                        "lr": train_config["optimizer"]["lr_fine-tuning"],
+                        "init_lr": train_config["optimizer"]["lr_fine-tuning"] },
+                        { "params": other_params,
+                        "lr": train_config["optimizer"]["lr"],
+                        "init_lr": train_config["optimizer"]["lr"] },
+                        ],
+                        betas=train_config["optimizer"]["betas"],
+                        eps=train_config["optimizer"]["eps"],
+                        weight_decay=train_config["optimizer"]["weight_decay"],
+                    )
+                    scheduled_optim._optimizer = _optimizer
 
         model.train()
         return model, scheduled_optim

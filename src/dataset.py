@@ -381,7 +381,7 @@ class SignDataset(Dataset):
 
         return scalerValue
 
-    def pad_token_ids(self, index: int, pad_const=1):
+    def pad_token_ids(self, index: int, pad_const=0):
         tokens = self.translation_token_ids[index]
         padding = self.max_seq_len - tokens.shape[0]
         if padding > 0:

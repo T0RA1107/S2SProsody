@@ -5,7 +5,7 @@ import itertools
 
 from util.audio_pool import AudioPool
 from . import networks
-from .sign2audio import Sign2Speech
+from .sign2audio import Sign2Speech, FastSpeech2
 
 from FastSpeech2.utils.tools import to_device
 
@@ -174,15 +174,14 @@ class BaseModel:
 
     def update_learning_rate(self):
         """Update learning rates for all the networks; called at the end of every epoch"""
-        old_lr = self.optimizers[0].param_groups[0]['lr']
-        for scheduler in self.schedulers:
+        for i, (name, scheduler) in enumerate(zip(self.model_names, self.schedulers)):
+            old_lr = self.optimizers[i].param_groups[0]['lr']
             if self.train_config["GAN"]["lr_policy"] == 'plateau':
                 scheduler.step(self.metric)
             else:
                 scheduler.step()
-
-        lr = self.optimizers[0].param_groups[0]['lr']
-        print('learning rate %.7f -> %.7f' % (old_lr, lr))
+            lr = self.optimizers[i].param_groups[0]['lr']
+            print(f'{name}: learning rate {old_lr:.7f} -> {lr:.7f}')
 
     def set_requires_grad(self, nets, requires_grad=False):
         """Set requies_grad=Fasle for all the networks to avoid unnecessary computations
@@ -247,6 +246,7 @@ class SemiCycleGANModel(BaseModel):
         # define networks (both Generators and discriminators)
         # The naming is different from those used in the paper.
         # Code (vs. paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)
+        # self.netG_sign2audio = Sign2Speech(preprocess_config, model_config)
         self.netG_sign2audio = Sign2Speech(preprocess_config, model_config)
         self.model_names.append("G_sign2audio")
         networks.init_net(self.netG_sign2audio, gpu_ids=self.gpu_ids)
@@ -262,17 +262,19 @@ class SemiCycleGANModel(BaseModel):
 
         self.audio2sign = None
 
+        self.step = 0
+
         if self.isTrain:  # define discriminators
             self.netD_audio = networks.define_D(
-                model_config["D_audio"]["input_nc"], model_config["D_audio"]["ndf"], "mask",
-                model_config["D_audio"]["n_layers_D"], self.netG_sign2audio.dim_embedding, model_config["D_audio"]["norm"],
+                model_config["D_audio"]["input_nc"], model_config["D_audio"]["ndf"], "audio",
+                model_config["D_audio"]["n_layers_D"], model_config["D_audio"]["norm"],
                 model_config["D_audio"]["init_type"], model_config["D_audio"]["init_gain"], train_config["gpu_ids"])
             self.model_names.append("D_audio")
 
         if self.isTrain:
             self.fake_audio_pool = AudioPool(train_config["GAN"]["pool_size"])  # create image buffer to store previously generated images
             # define loss functions
-            self.criterionGAN = networks.GANLoss(train_config["GAN"]["gan_mode"], mask=True).to(self.device)  # define GAN loss.
+            self.criterionGAN = networks.GANLoss(train_config["GAN"]["gan_mode"]).to(self.device)  # define GAN loss.
             # self.criterionCycle = torch.nn.L1Loss()
             # self.criterionIdt = torch.nn.L1Loss()
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
@@ -303,27 +305,36 @@ class SemiCycleGANModel(BaseModel):
         """
         self.real_sign  = inputs["sign"]
         self.fake_raw_texts = self.real_sign[0]
+        self.fake_text_lens = self.real_sign[4]
 
         self.real_audio = inputs["audio"]
+        self.real_ids = self.real_audio[0]
         self.real_raw_texts = self.real_audio[1]
         self.real_speakers = self.real_audio[2]
         self.real_texts = self.real_audio[3]
         self.real_text_lens = self.real_audio[4]
-        self.real_audio_lens = self.real_audio[7]
         self.real_max_text_lens = torch.Tensor(self.real_audio[5])
+        self.real_mels = self.real_audio[6]
+        self.real_audio_lens = self.real_audio[7]
+        self.real_max_mel_lens = torch.Tensor(self.real_audio[8])
+        self.real_pitches = self.real_audio[9]
+        self.real_energies = self.real_audio[10]
+        self.real_durations = self.real_audio[11]
 
-        self.set_eval_mode()
-        self.real_speaker_text_embedding = self.netG_sign2audio.text_encoding(
-            self.real_speakers.to(self.device),
-            self.real_texts.to(self.device),
-            self.real_text_lens.to(self.device),
-            self.real_max_text_lens.to(self.device),
-        )
+        # self.set_eval_mode()
+        # self.real_speaker_text_embedding = self.netG_sign2audio.text_encoding(
+        #     self.real_speakers.to(self.device),
+        #     self.real_texts.to(self.device),
+        #     self.real_text_lens.to(self.device),
+        #     self.real_max_text_lens.to(self.device),
+        # )
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
         raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length = self.real_sign
         batch_size = text_tokens.shape[0]
+        max_src_len = token_length.max()
+        text_tokens = text_tokens[:, :max_src_len]
 
         speakers = torch.randint(self.speaker_num, (batch_size,)).long()
         (
@@ -342,15 +353,17 @@ class SemiCycleGANModel(BaseModel):
             speakers.to(self.device),
             text_tokens.to(self.device),
             token_length.to(self.device),
-            text_tokens.shape[1],
-            key_point=visual_prefix.to(self.device))  # G_A(A)
+            max_src_len,
+            key_point=visual_prefix.to(self.device)
+        )  # G_A(A)
 
-        self.fake_speaker_text_embedding = speaker_text_embedding
-        self.fake_audio = postnet_output.unsqueeze(1)
+        # self.fake_speaker_text_embedding = speaker_text_embedding
+        self.fake_audio = postnet_output.masked_fill(
+            mel_masks.unsqueeze(2).repeat(1, 1, postnet_output.shape[2]), 0.0).unsqueeze(1)
         self.fake_audio_lens = mel_lens
         # self.rec_sign = self.audio2sign(self.fake_audio)   # G_B(G_A(A))
 
-    def backward_D_basic(self, netD, real, fake, real_audio_lens, fake_audio_lens):
+    def backward_D_basic(self, netD, real, fake):
         """Calculate GAN loss for the discriminator
 
         Parameters:
@@ -362,11 +375,11 @@ class SemiCycleGANModel(BaseModel):
         We also call loss_D.backward() to calculate the gradients.
         """
         # Real
-        pred_real, mask = netD(real, real_audio_lens)
-        loss_D_real = self.criterionGAN(pred_real, True, mask=mask)
+        pred_real = netD(real)
+        loss_D_real = self.criterionGAN(pred_real, True)
         # Fake
-        pred_fake, mask = netD(fake.detach(), fake_audio_lens)
-        loss_D_fake = self.criterionGAN(pred_fake, False, mask=mask)
+        pred_fake = netD(fake.detach())
+        loss_D_fake = self.criterionGAN(pred_fake, False)
         # Combined loss and calculate gradients
         loss_D = (loss_D_real + loss_D_fake) * 0.5
         loss_D.backward()
@@ -375,39 +388,37 @@ class SemiCycleGANModel(BaseModel):
     def backward_D_audio(self):
         """Calculate GAN loss for discriminator D_A"""
         fake_audio = self.fake_audio_pool.query(self.fake_audio)
-        (
-            ids,
-            raw_texts,
-            speakers,
-            texts,
-            text_lens,
-            max_text_lens,
-            mels,
-            mel_lens,
-            max_mel_lens,
-            pitches,
-            energies,
-            durations,
-        ) = self.real_audio
-        real_audio = mels.to(self.device)
+        real_audio = self.real_mels.to(self.device)
         self.loss_D_audio = self.backward_D_basic(
             self.netD_audio,
             real_audio.unsqueeze(1),
-            fake_audio.unsqueeze(1),
-            self.real_audio_lens,
-            self.fake_audio_lens)
+            fake_audio.unsqueeze(1)
+            )
 
     def backward_G(self):
         """Calculate the loss for generators G_A and G_B"""
 
         # GAN loss D_audio(G_sign2audio(sign))
-        p, mask = self.netD_audio(self.fake_audio, self.fake_audio_lens)
-        self.loss_G_audio = self.criterionGAN(p, True, mask=mask)
+        pred_fake = self.netD_audio(self.fake_audio)
+        self.loss_G_audio = self.criterionGAN(pred_fake, True)
         # Forward cycle loss || G_B(G_A(A)) - A||
         # self.loss_cycle_A = self.criterionCycle(self.rec_sign, self.real_sign) * lambda_sign
         # combined loss and calculate gradients
         self.loss_G = self.loss_G_audio  # + self.loss_cycle_A
         self.loss_G.backward()
+
+    def calc_confusion_matrix(self):
+        self.set_eval_mode()
+        real_audio = self.real_mels.to(self.device)
+        pred_real = self.netD_audio(real_audio.unsqueeze(1))
+        pred_fake = self.netD_audio(self.fake_audio)
+        pred_real = pred_real >= 0.5
+        pred_fake = pred_fake >= 0.5
+        gt_real = torch.full_like(pred_real, True)
+        gt_fake = torch.full_like(pred_fake, False)
+        preds = torch.concat((pred_real, pred_fake))
+        gt = torch.concat((gt_real, gt_fake))
+        return preds.squeeze(1).detach().cpu().numpy(), gt.squeeze(1).detach().cpu().numpy()
 
     def optimize_parameters(self):
         """Calculate losses, gradients, and update network weights; called in every training iteration"""
@@ -418,9 +429,11 @@ class SemiCycleGANModel(BaseModel):
         self.set_requires_grad([self.netD_audio], False)  # Ds require no gradients when optimizing Gs
         self.optimizer_G.zero_grad()  # set G_A and G_B's gradients to zero
         self.backward_G()             # calculate gradients for G_A and G_B
-        # self.optimizer_G.step()       # update G_A and G_B's weights
-        # D_A and D_B
-        self.set_requires_grad([self.netD_audio], True)
-        self.optimizer_D.zero_grad()   # set D_A and D_B's gradients to zero
-        self.backward_D_audio()      # calculate gradients for D_audio
-        self.optimizer_D.step()  # update D_A and D_B's weights
+        self.optimizer_G.step()       # update G_A and G_B's weights
+        if self.step == 0:
+            # D_A and D_B
+            self.set_requires_grad([self.netD_audio], True)
+            self.optimizer_D.zero_grad()   # set D_A and D_B's gradients to zero
+            self.backward_D_audio()      # calculate gradients for D_audio
+            self.optimizer_D.step()  # update D_A and D_B's weights
+        self.step = (self.step + 1) % 2

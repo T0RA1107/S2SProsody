@@ -56,7 +56,7 @@ def main(args, configs, configs_ft):
     if args.use_wandb:
         wandb.init(
             project='Sign2Speech',
-            group="w/o reconstruction S2S GAN",
+            group="length test",
             job_type="training",
             name=run_name,
             config={
@@ -100,6 +100,31 @@ def main(args, configs, configs_ft):
 
                     log["loss/G_audio"] = loss_G
                     log["loss/D_audio"] = loss_D
+
+                    # calc confusion matrix
+                    preds, gt = model.calc_confusion_matrix()
+                    log["confusion_matrix"] = wandb.plot.confusion_matrix(probs=None,
+                        y_true=gt, preds=preds, class_names=["False", "True"])
+
+                    # log the distribution of predict audio length
+                    length = model.fake_audio_lens.float()
+                    mean = torch.mean(length)
+                    var = torch.mean((length - mean) ** 2.)
+                    log["length/mean_text"] = model.fake_text_lens.float().mean()
+                    log["length/mean_pred"] = mean
+                    log["length/var_pred"] = var
+                    # print("predict length")
+                    # print(mean, var)
+
+                    # log the distribution of GT audio length
+                    length = model.real_audio_lens.float()
+                    mean = torch.mean(length)
+                    var = torch.mean((length - mean) ** 2.)
+                    log["length/mean_text_GT"] = model.real_text_lens.float().mean()
+                    log["length/mean_GT"] = mean
+                    log["length/var_GT"] = var
+                    # print("predict length")
+                    # print(mean, var)
 
                 if total_iters % synth_step == 0:
                     output = model.fake_audio

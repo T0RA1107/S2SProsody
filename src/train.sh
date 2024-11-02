@@ -4,5 +4,5 @@ python train.py\
  -m config/${dataset}/model.yaml\
  -t config/${dataset}/train.yaml\
  --fine_tuning\
- --restore_step_ft 10000\
+ --restore_step_ft 100000\
  --use_wandb

@@ -161,7 +161,7 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     return init_net(net, init_type, init_gain, gpu_ids)
 
 
-def define_D(input_nc, ndf, netD, n_layers_D=3, dim_embedding=256, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[]):
+def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal', init_gain=0.02, gpu_ids=[]):
     """Create a discriminator
 
     Parameters:
@@ -200,10 +200,8 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, dim_embedding=256, norm='batch',
         net = NLayerDiscriminator(input_nc, ndf, n_layers_D, norm_layer=norm_layer)
     elif netD == 'pixel':     # classify if each pixel is real or fake
         net = PixelDiscriminator(input_nc, ndf, norm_layer=norm_layer)
-    elif netD == 'mask':
-        net = MaskedDiscriminator(input_nc, ndf, norm_layer=norm_layer)
-    elif netD == 'TextConditionalDiscriminator':
-        net = TextConditionalDiscriminator(input_nc, dim_embedding, ndf, norm_layer=norm_layer)
+    elif netD == 'audio':
+        net = AudioDiscriminator(input_nc, ndf, norm_layer=norm_layer)
     else:
         raise NotImplementedError('Discriminator model name [%s] is not recognized' % netD)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -239,7 +237,7 @@ class GANLoss(nn.Module):
             if not mask:
                 self.loss = nn.MSELoss()
             else:
-                self.loss = nn.MSELoss(reduce='none')
+                self.loss = nn.MSELoss(reduction='none')
         elif gan_mode == 'vanilla':
             self.loss = nn.BCEWithLogitsLoss()
         elif gan_mode in ['wgangp']:
@@ -596,7 +594,7 @@ class NLayerDiscriminator(nn.Module):
         return output
 
 
-class MaskedDiscriminator(nn.Module):
+class AudioDiscriminator(nn.Module):
     """Defines a PatchGAN discriminator"""
 
     def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d):
@@ -608,7 +606,7 @@ class MaskedDiscriminator(nn.Module):
             n_layers (int)  -- the number of conv layers in the discriminator
             norm_layer      -- normalization layer
         """
-        super(MaskedDiscriminator, self).__init__()
+        super(AudioDiscriminator, self).__init__()
         if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
@@ -617,7 +615,10 @@ class MaskedDiscriminator(nn.Module):
         self.n_layers = n_layers
         kw = 4
         padw = 1
-        sequence = [nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
+        sequence = [
+            nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw),
+            nn.Dropout2d(),
+            nn.LeakyReLU(0.2, True)]
         nf_mult = 1
         nf_mult_prev = 1
         for n in range(1, n_layers):  # gradually increase the number of filters
@@ -626,6 +627,7 @@ class MaskedDiscriminator(nn.Module):
             sequence += [
                 nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
                 norm_layer(ndf * nf_mult),
+                nn.Dropout2d(),
                 nn.LeakyReLU(0.2, True)
             ]
 
@@ -633,29 +635,23 @@ class MaskedDiscriminator(nn.Module):
         nf_mult = min(2 ** n_layers, 8)
         sequence += [
             nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+            nn.Dropout2d(),
             norm_layer(ndf * nf_mult),
             nn.LeakyReLU(0.2, True)
         ]
 
-        sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
-        self.model = nn.Sequential(*sequence)
+        # sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
+        self.mapping = nn.Sequential(*sequence)
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))  # output (B, ndf * nf_mult, 1, 1)
+        self.fc = nn.Linear(ndf * nf_mult, 1)
 
-    def forward(self, input, length):
+    def forward(self, input):
         """Standard forward."""
-        output = self.model(input)
-
-        batch_size = input.shape[0]
-        current_length = torch.Tensor([input.shape[2] + 2]).long().repeat(batch_size).to(length.device)
-        wrap_region = length
-        for _ in range(self.n_layers):
-            current_length = current_length // 2
-            wrap_region = (wrap_region + 2) // 2
-            wrap_region = wrap_region.min(current_length)
-        current_length -= 2
-        wrap_region = wrap_region.min(current_length)
-        mask = torch.arange(output.shape[2]).view(1, -1).repeat(batch_size, 1).to(output.device) < wrap_region.unsqueeze(1).repeat(1, output.shape[2])
-        output = output * mask.unsqueeze(1).unsqueeze(3).repeat(1, 1, 1, output.shape[3])
-        return output, mask
+        output = self.mapping(input)
+        output = self.adaptive_pool(output)
+        output = output.view(output.shape[0], -1)  # (B, ndf * nf_mult)
+        output = self.fc(output)
+        return output
 
 
 class TextConditionalDiscriminator(nn.Module):
