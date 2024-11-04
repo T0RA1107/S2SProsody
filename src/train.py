@@ -100,6 +100,12 @@ def main(args, configs, configs_ft):
 
                     log["loss/G_audio"] = loss_G
                     log["loss/D_audio"] = loss_D
+                    log["loss/total_reconstruction"] = model.total_loss_reconstruction
+                    log["loss/mel_reconstruction"] = model.mel_loss_reconstruction
+                    log["loss/postnet_mel_reconstruction"] = model.postnet_mel_loss_reconstruction
+                    log["loss/pitch_reconstruction"] = model.pitch_loss_reconstruction
+                    log["loss/energy_reconstruction"] = model.energy_loss_reconstruction
+                    log["loss/duration_reconstruction"] = model.duration_loss_reconstruction
 
                     # calc confusion matrix
                     preds, gt = model.calc_confusion_matrix()
@@ -107,7 +113,7 @@ def main(args, configs, configs_ft):
                         y_true=gt, preds=preds, class_names=["False", "True"])
 
                     # log the distribution of predict audio length
-                    length = model.fake_audio_lens.float()
+                    length = model.fake_audio_with_sign_lens.float()
                     mean = torch.mean(length)
                     var = torch.mean((length - mean) ** 2.)
                     log["length/mean_text"] = model.fake_text_lens.float().mean()
@@ -127,8 +133,8 @@ def main(args, configs, configs_ft):
                     # print(mean, var)
 
                 if total_iters % synth_step == 0:
-                    output = model.fake_audio
-                    output_lens = model.fake_audio_lens
+                    output = model.fake_audio_with_sign
+                    output_lens = model.fake_audio_with_sign_lens
                     raw_text = model.fake_raw_texts[0]
                     mel_len = output_lens[0].item()
                     mel_prediction = output[0, :, :mel_len].detach().transpose(1, 2)

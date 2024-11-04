@@ -617,7 +617,6 @@ class AudioDiscriminator(nn.Module):
         padw = 1
         sequence = [
             nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw),
-            nn.Dropout2d(),
             nn.LeakyReLU(0.2, True)]
         nf_mult = 1
         nf_mult_prev = 1
@@ -627,7 +626,6 @@ class AudioDiscriminator(nn.Module):
             sequence += [
                 nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
                 norm_layer(ndf * nf_mult),
-                nn.Dropout2d(),
                 nn.LeakyReLU(0.2, True)
             ]
 
@@ -635,7 +633,6 @@ class AudioDiscriminator(nn.Module):
         nf_mult = min(2 ** n_layers, 8)
         sequence += [
             nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
-            nn.Dropout2d(),
             norm_layer(ndf * nf_mult),
             nn.LeakyReLU(0.2, True)
         ]
