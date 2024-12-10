@@ -235,12 +235,22 @@ class SignDataset(Dataset):
             # select by split ["train", "valid"]
             data_frame = data_frame.loc[data_frame["split"].str.contains(split)]
 
-        def filter_missing(row):
+        def filter_missing_or_short(row):
             full_path = os.path.join(self.feat_path, f"{row['vid']}.pkl")
-            return os.path.exists(full_path) and os.path.getsize(full_path) > 0
+            ok = os.path.exists(full_path) and os.path.getsize(full_path) > 0
+            if ok:
+                with open(full_path, "rb") as file:
+                    pose_keypoints = pickle.load(file)
+                    ok = ok and (pose_keypoints.shape[0] >= 30)
+            return ok
 
-        is_missing = data_frame.apply(filter_missing, axis=1)
-        df_filtered = data_frame[is_missing]
+        is_missing_or_short = data_frame.apply(filter_missing_or_short, axis=1)
+        df_filtered = data_frame[is_missing_or_short]
+        # for vid in df_filtered["vid"]:
+        #     full_path = os.path.join(self.feat_path, f"{vid}.pkl")
+        #     with open(full_path, "rb") as file:
+        #         pose_keypoints = pickle.load(file)
+        #         assert pose_keypoints.shape[0] >= 30, pose_keypoints.shape[0]
         if self.local_rank == 0:
             print(f"Split:{split}\nBefore filtering: {len(data_frame)}\n After filtering: {len(df_filtered)}")
         # translation labels and sample names (split agnostic)
@@ -261,12 +271,15 @@ class SignDataset(Dataset):
         # vn_lens = [len(v) for _,v in self.matched_VNs.items()]
         # self.max_vns = max(vn_lens)
 
+        token_id_lens = [0 for _ in range(len(self.translation))]
         if os.path.exists(preprocess_config["preprocessing_sign"]["translation_token_ids"]):
             self.translation_token_ids = [np.array([]) for _ in range(len(self.translation))]
             for t in open(preprocess_config["preprocessing_sign"]["translation_token_ids"]).readlines():
                 vid, trans_ids_str = t.rstrip("\n").split("|")
                 trans_ids = list(map(int, trans_ids_str.split(" ")))
-                self.translation_token_ids[self.vid2idx[vid]] = np.array(trans_ids)
+                if vid in self.vid2idx:
+                    self.translation_token_ids[self.vid2idx[vid]] = np.array(trans_ids)
+                    token_id_lens[self.vid2idx[vid]] = len(trans_ids)
         else:
             pool = Pool(processes=32)
             self.translation_token_ids = [np.array([]) for _ in range(len(self.translation))]
@@ -276,9 +289,23 @@ class SignDataset(Dataset):
                 for i, trans_ids, trans_ids_txt in pool.imap_unordered(write_txt, enumerate(zip(self.video_names, self.translation, [preprocess_config] * len(self.translation)))):
                     self.translation_token_ids[i] = np.array(trans_ids)
                     trans_ids_txt_list[i] = trans_ids_txt
+                    token_id_lens[i] = len(self.translation_token_ids[i])
                     t.update(1)
             with open(preprocess_config["preprocessing_sign"]["translation_token_ids"], "w") as f:
                 f.writelines(trans_ids_txt_list)
+
+        ### Filtering too long translation_token_ids
+        trans_id_arg = np.argsort(token_id_lens)
+        token_id_lens = np.array(token_id_lens)[trans_id_arg]
+        too_long_idx = -1
+        while token_id_lens[too_long_idx] > 250:
+            too_long_idx -= 1
+        self.translation_token_ids = [
+            self.translation_token_ids[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
+        self.translation = [
+            self.translation[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
+        self.video_names = [
+            self.video_names[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
 
         assert len(self.translation_token_ids) == len(
             self.video_names), f"Text ids count:{len(self.translation_token_ids)}\tVid count:{len(self.video_names)}"
@@ -303,16 +330,49 @@ class SignDataset(Dataset):
 
         # read files
         vid_name = self.video_names[index]
-
         file_path = os.path.join(self.feat_path, f"{vid_name}.pkl")
         with open(file_path, "rb") as f:
             pose_keypoints = pickle.load(f)  # T K(133) C
+            norm_pose_keypoints = self.normalize_joints(pose_keypoints)
 
         # 23(17+6) 11 selected
         body_pose = pose_keypoints[:, body_sample_indices, :]
         hand_right = pose_keypoints[:, 91:112, :]  # 21 Keypoints
         hand_left = pose_keypoints[:, 112:, :]  # 21 Keypoints
         face = pose_keypoints[:, face_sample_indices, :]  # 23 Keypoints
+        norm_hands = norm_pose_keypoints[:, 91:, :]
+        norm_face = norm_pose_keypoints[:, face_sample_indices, :]  # 23 Keypoints
+
+        def norm_pose(pose):
+            return (pose[:, :, 0] ** 2 + pose[:, :, 1] ** 2) ** 0.5
+
+        velocity_hands = np.diff(norm_hands[:, :, :2], axis=0)
+        velocity_face = np.diff(norm_face[:, :, :2], axis=0)
+
+        accel_hands = np.diff(velocity_hands, axis=0)
+        accel_face = np.diff(velocity_face, axis=0)
+
+        velocity_cated = np.concatenate((
+            norm_pose(velocity_hands).max(axis=1, keepdims=True),
+            norm_pose(velocity_face).max(axis=1, keepdims=True)),
+        axis=1)
+        velocity_max = np.max(velocity_cated, axis=0)
+        velocity_min = np.min(velocity_cated, axis=0)
+
+        accel_cated = np.concatenate((
+            norm_pose(accel_hands).max(axis=1, keepdims=True),
+            norm_pose(accel_face).max(axis=1, keepdims=True)),
+        axis=1)
+        try:
+            accel_max = np.max(accel_cated, axis=0)
+            accel_min = np.min(accel_cated, axis=0)
+        except:
+            print(norm_pose_keypoints.shape)
+            print(accel_cated.shape)
+            assert(False)
+
+        pause = np.mean(velocity_cated <= np.array([0.015, 0.002]), axis=0)
+        prosody_label = np.concatenate((velocity_max, velocity_min, accel_max, accel_min, pause), axis=0)
 
         pose_tuple = (body_pose, hand_left, hand_right, face)
         pose_cated = np.concatenate(
@@ -345,7 +405,7 @@ class SignDataset(Dataset):
         pose_length = T if T <= self.visual_token_num else self.visual_token_num
         assert pose_output.shape[0] >= self.visual_token_num, "{} {}".format(pose_output.shape[0], self.visual_token_num)
 
-        return pose_output, pose_length
+        return pose_output, pose_length, prosody_label
 
     def rand_view_transform(self, X, agx, agy, s):
         if X.shape[-1] == 2:
@@ -402,7 +462,7 @@ class SignDataset(Dataset):
             raw_translation = self.translation[index]
             text_tokens, mask, token_length = self.pad_token_ids(
                 index)  # [max_seq_len]
-            visual_prefix, visual_length = self.read_pose_files(index)
+            visual_prefix, visual_length, prosody_label = self.read_pose_files(index)
             agx = np.random.randint(-60, 60)
             agy = np.random.randint(-60, 60)
             s = np.random.uniform(0.5, 1.5)
@@ -415,7 +475,7 @@ class SignDataset(Dataset):
             # reorder [T V C] -> [C T V]
             visual_prefix = np.transpose(visual_prefix, (2, 0, 1))
             # vn_idxs, vn_len = self.get_vn(index)
-            return raw_translation, text_tokens, mask, visual_prefix, token_length, visual_length  # , vn_idxs, vn_len
+            return raw_translation, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label  # , vn_idxs, vn_len
         elif self.phase == "test":
             raw_translation = self.translation[index]
             visual_prefix, visual_length = self.read_pose_files(index)
@@ -427,15 +487,16 @@ class SignDataset(Dataset):
             visual_prefix = visual_prefix.type(torch.FloatTensor)
             return raw_translation, visual_prefix, index, visual_length
 
-    def reprocess(self, raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, idxs):
+    def reprocess(self, raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, idxs):
         raw_texts = [raw_texts[idx] for idx in idxs]
         text_tokens = torch.from_numpy(np.array([text_tokens[idx] for idx in idxs])).long()
         mask = torch.from_numpy(np.array([mask[idx] for idx in idxs])).float()
         visual_prefix = torch.from_numpy(np.array([visual_prefix[idx] for idx in idxs])).float()
         token_length = torch.from_numpy(np.array([token_length[idx] for idx in idxs]))
         visual_length = torch.from_numpy(np.array([visual_length[idx] for idx in idxs]))
+        prosody_label = torch.from_numpy(np.array([prosody_label[idx] for idx in idxs])).float()
 
-        return raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length
+        return raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label
 
     def collate_fn(self, data):
         data_size = len(data)
@@ -458,10 +519,12 @@ class SignDataset(Dataset):
         visual_prefix = np.stack([d[3] for d in data], axis=0)
         token_length = np.stack([d[4] for d in data], axis=0)
         visual_length = [d[5] for d in data]
+        prosody_label = np.stack([d[6] for d in data], axis=0)
 
         output = list()
         for idx in idx_arr:
-            output.append(self.reprocess(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, idx))
+            output.append(self.reprocess(
+                raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, idx))
 
         return output
 

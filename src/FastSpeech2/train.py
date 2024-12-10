@@ -37,6 +37,8 @@ def main(args, configs, configs_ft=None):
         batch_size=batch_size * group_size,
         shuffle=True,
         collate_fn=dataset.collate_fn,
+        num_workers=2,
+        pin_memory=True
     )
 
     # Prepare model
@@ -134,8 +136,8 @@ def main(args, configs, configs_ft=None):
 
                     # log the distribution of predict audio length
                     length = output[9]
-                    mean = torch.mean(length)
-                    var = torch.mean((length - mean) ** 2.)
+                    mean = torch.mean(length.float())
+                    var = torch.mean((length.float() - mean) ** 2.)
                     log["length/mean"] = mean
                     log["length/var"] = var
 

@@ -22,6 +22,7 @@ def get_model(args, configs, device, configs_ft=None, train=False):
             train_config["path"]["ckpt_path"],
             "{}.pth.tar".format(args.restore_step),
         )
+        print(ckpt_path)
         ckpt = torch.load(ckpt_path)
         model.load_state_dict(ckpt["model"])
 
@@ -91,7 +92,7 @@ def get_param_num(model):
 def get_vocoder(config, device):
     name = config["vocoder"]["model"]
     speaker = config["vocoder"]["speaker"]
-    hifigan_path = "/home/ubuntu/slocal/S2SProsody/src/FastSpeech2/hifigan"
+    hifigan_path = "/home/aolab/Desktop/S2SProsody/src/FastSpeech2/hifigan"
 
     if name == "MelGAN":
         if speaker == "LJSpeech":

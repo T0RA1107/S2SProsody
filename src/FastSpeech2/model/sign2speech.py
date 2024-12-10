@@ -1,15 +1,10 @@
-import os
-import json
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from FastSpeech2.transformer.Models import S2SMixer
-from .modules import VarianceAdaptor
 from FastSpeech2.utils.tools import get_mask_from_lengths
 from .fastspeech2 import FastSpeech2
-from FastSpeech2.transformer.SubLayers import MultiHeadAttention
 
 from GloFE.models.pose_backbones import PartedPoseBackbone
 
@@ -83,13 +78,11 @@ class Sign2Speech(FastSpeech2):
                 -1, max_src_len, -1
             )
 
-        speaker_text_embedding = output.detach()
-
         # Cross Attention with keypoint
-        # if key_point is not None:
-        #     sign_embbeding = self.sign_processer(key_point)  # [B, C, T, V] -> [B, T, C]
-        #     sign_embbeding = self.visual_project(sign_embbeding)
-        #     output = self.s2s_mixier(output, sign_embbeding)
+        if key_point is not None:
+            sign_embbeding = self.sign_processer(key_point)  # [B, C, T, V] -> [B, T, C]
+            sign_embbeding = self.visual_project(sign_embbeding)
+            output = self.s2s_mixier(output, sign_embbeding)
 
         (
             output,
@@ -127,5 +120,4 @@ class Sign2Speech(FastSpeech2):
             mel_masks,
             src_lens,
             mel_lens,
-            speaker_text_embedding,
         )

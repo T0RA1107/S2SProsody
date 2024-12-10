@@ -2,6 +2,10 @@ import argparse
 import os
 import datetime
 
+from PIL import Image
+import seaborn as sns
+import matplotlib.pyplot as plt
+from io import BytesIO
 import soundfile as sf
 import torch
 import yaml
@@ -31,12 +35,15 @@ def main(args, configs, configs_ft):
         model_config["speaker_num"] = dataset.speaker_num
     dataset_size = len(dataset)    # get the number of images in the dataset.
     batch_size = train_config["optimizer"]["batch_size"]
+    print("Batch size:", batch_size)
     group_size = 4
     loader = DataLoader(
         dataset,
         batch_size=batch_size * group_size,
         shuffle=True,
         collate_fn=dataset.collate_fn,
+        num_workers=2,
+        pin_memory=True
     )
     print('The number of training images = %d' % dataset_size)
 
@@ -48,15 +55,17 @@ def main(args, configs, configs_ft):
 
     dt_now = datetime.datetime.now()
     run_name = dt_now.strftime('%m:%d:%H:%M')
-    run_dir = f"./output/{run_name}/"
-    os.makedirs(run_dir, exist_ok=True)
-    os.makedirs(run_dir + "wav_preds/", exist_ok=True)
-    pred_txt_file = run_dir + "wav_preds/pred.txt"
+    if not args.without_save_wav:
+        run_dir = f"./output/{run_name}/"
+        os.makedirs(run_dir, exist_ok=True)
+        os.makedirs(run_dir + "wav_wo_sign/", exist_ok=True)
+        os.makedirs(run_dir + "wav_w_sign/", exist_ok=True)
+        pred_txt_file = run_dir + "pred.txt"
 
     if args.use_wandb:
         wandb.init(
             project='Sign2Speech',
-            group="length test",
+            group="weak prosody reconstruction",
             job_type="training",
             name=run_name,
             config={
@@ -65,7 +74,6 @@ def main(args, configs, configs_ft):
                 "train": train_config
             },
         )
-        table = wandb.Table(columns=["translation", "Speech"])
 
     grad_acc_step = train_config["optimizer"]["grad_acc_step"]
     grad_clip_thresh = train_config["optimizer"]["grad_clip_thresh"]
@@ -80,7 +88,7 @@ def main(args, configs, configs_ft):
     assert synth_step % log_step == 0
     assert val_step % log_step == 0
 
-    for epoch in tqdm(range(step_count, total_step + n_epochs_decay + 1), desc="Training"):    # outer loop for different epochs; we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>
+    for epoch in tqdm(range(step_count, total_step + n_epochs_decay), desc="Training"):    # outer loop for different epochs; we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>
         epoch_iter = 0                  # the number of training iterations in current epoch, reset to 0 every epoch
         model.update_learning_rate()    # update learning rates in the beginning of every epoch.
         for batchs in tqdm(loader, leave=False, desc=f"EPOCH {epoch}"):  # inner loop within one epoch
@@ -93,46 +101,26 @@ def main(args, configs, configs_ft):
 
 
                 if total_iters % log_step == 0:    # print training losses and save logging information to the disk
-                    log = {}
+                    log = { "epoch": epoch }
+                    lr_dict = model.get_learning_rate()
+                    log.update(lr_dict)
 
                     loss_G = model.loss_G_audio
                     loss_D = model.loss_D_audio
 
                     log["loss/G_audio"] = loss_G
                     log["loss/D_audio"] = loss_D
-                    log["loss/total_reconstruction"] = model.total_loss_reconstruction
-                    log["loss/mel_reconstruction"] = model.mel_loss_reconstruction
-                    log["loss/postnet_mel_reconstruction"] = model.postnet_mel_loss_reconstruction
-                    log["loss/pitch_reconstruction"] = model.pitch_loss_reconstruction
-                    log["loss/energy_reconstruction"] = model.energy_loss_reconstruction
-                    log["loss/duration_reconstruction"] = model.duration_loss_reconstruction
+                    log["loss/prosody"] = model.loss_prosody
 
-                    # calc confusion matrix
-                    preds, gt = model.calc_confusion_matrix()
-                    log["confusion_matrix"] = wandb.plot.confusion_matrix(probs=None,
-                        y_true=gt, preds=preds, class_names=["False", "True"])
+                    # log["loss/total_reconstruction"] = model.total_loss_reconstruction
+                    # log["loss/mel_reconstruction"] = model.mel_loss_reconstruction
+                    # log["loss/postnet_mel_reconstruction"] = model.postnet_mel_loss_reconstruction
+                    # log["loss/pitch_reconstruction"] = model.pitch_loss_reconstruction
+                    # log["loss/energy_reconstruction"] = model.energy_loss_reconstruction
+                    # log["loss/duration_reconstruction"] = model.duration_loss_reconstruction
 
-                    # log the distribution of predict audio length
-                    length = model.fake_audio_with_sign_lens.float()
-                    mean = torch.mean(length)
-                    var = torch.mean((length - mean) ** 2.)
-                    log["length/mean_text"] = model.fake_text_lens.float().mean()
-                    log["length/mean_pred"] = mean
-                    log["length/var_pred"] = var
-                    # print("predict length")
-                    # print(mean, var)
-
-                    # log the distribution of GT audio length
-                    length = model.real_audio_lens.float()
-                    mean = torch.mean(length)
-                    var = torch.mean((length - mean) ** 2.)
-                    log["length/mean_text_GT"] = model.real_text_lens.float().mean()
-                    log["length/mean_GT"] = mean
-                    log["length/var_GT"] = var
-                    # print("predict length")
-                    # print(mean, var)
-
-                if total_iters % synth_step == 0:
+                if total_iters % synth_step == 0 and not args.without_save_wav:
+                    ### Save Audio conditioned by text and sign
                     output = model.fake_audio_with_sign
                     output_lens = model.fake_audio_with_sign_lens
                     raw_text = model.fake_raw_texts[0]
@@ -144,22 +132,29 @@ def main(args, configs, configs_ft):
                         model_config,
                         preprocess_config,
                     )[0]
-                    # audio = wandb.Audio(
-                    #     wav_prediction / max(abs(wav_prediction)),
-                    #     sample_rate=sampling_rate)
                     sf.write(
-                        run_dir + f"wav_preds/synth_{total_iters // synth_step}.wav",
+                        run_dir + f"wav_w_sign/synth_{total_iters // synth_step}.wav",
                         wav_prediction, samplerate=sampling_rate)
                     with open(pred_txt_file, "a") as f:
                         f.write(raw_text + "\n")
 
-                    # table.add_data(raw_text, audio)
-                    # log["Training"] = table
+                    ### Save Audio conditioned by only text
+                    output = model.synth_audio
+                    output_lens = model.synth_audio_lens
+                    mel_len = output_lens[0].item()
+                    mel_prediction = output[0, :, :mel_len].detach().transpose(1, 2)
+                    wav_prediction = vocoder_infer(
+                        mel_prediction,
+                        vocoder,
+                        model_config,
+                        preprocess_config,
+                    )[0]
+                    sf.write(
+                        run_dir + f"wav_wo_sign/synth_{total_iters // synth_step}.wav",
+                        wav_prediction, samplerate=sampling_rate)
 
                 if args.use_wandb and total_iters % log_step == 0:
                     wandb.log(log)
-
-                    # visualizer.plot_current_losses(epoch, float(epoch_iter) / dataset_size, losses)
 
                 # if total_iters % save_step == 0:   # cache our latest model every <save_latest_freq> iterations
                 #     print('saving the latest model (epoch %d, total_iters %d)' % (epoch, total_iters))
@@ -194,6 +189,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--restore_step_ft", type=int
+    )
+    parser.add_argument(
+        "--without_save_wav", action="store_true"
     )
     args = parser.parse_args()
 

@@ -60,7 +60,7 @@ def get_scheduler(optimizer, train_config):
     elif train_config["GAN"]["lr_policy"] == 'plateau':
         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, threshold=0.01, patience=5)
     elif train_config["GAN"]["lr_policy"] == 'cosine':
-        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=train_config["step"]["total_step"], eta_min=0)
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=train_config["step"]["total_step"], eta_min=optimizer.param_groups[0]['lr'] / 10.)
     else:
         return NotImplementedError('learning rate policy [%s] is not implemented', train_config["GAN"]["lr_policy"])
     return scheduler
