@@ -256,6 +256,7 @@ class SignDataset(Dataset):
         # translation labels and sample names (split agnostic)
         self.translation = df_filtered["raw-text"].to_list()
         self.video_names = df_filtered["vid"].to_list()
+        self.yids = df_filtered["yid"].to_list()
         self.vid2idx = {
             vid: i for i, vid in enumerate(self.video_names)
         }
@@ -306,6 +307,30 @@ class SignDataset(Dataset):
             self.translation[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
         self.video_names = [
             self.video_names[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
+        self.yids = [
+            self.yids[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
+        self.vid2idx = {
+            vid: i for i, vid in enumerate(self.video_names)
+        }
+
+        # for video-wise normalization
+        yid2idxs = { yid: [] for yid in self.yids }
+        for i, yid in enumerate(self.yids):
+            yid2idxs[yid].append(i)
+
+        # x_min, x_max, y_min, y_max
+        self.yid2range = {}
+        for yid, idxs in yid2idxs.items():
+            key_points = []
+            for i in idxs:
+                key_points.append(self.read_keypoints(i))
+            key_points = np.concatenate(key_points, axis=0)
+            self.yid2range[yid] = [
+                key_points[:, :, 0].min(),
+                key_points[:, :, 0].max(),
+                key_points[:, :, 1].min(),
+                key_points[:, :, 1].max()
+            ]
 
         assert len(self.translation_token_ids) == len(
             self.video_names), f"Text ids count:{len(self.translation_token_ids)}\tVid count:{len(self.video_names)}"
@@ -319,6 +344,22 @@ class SignDataset(Dataset):
     def __len__(self):
         return len(self.video_names)
 
+    def read_keypoints(self, index: int):
+        vid_name = self.video_names[index]
+        file_path = os.path.join(self.feat_path, f"{vid_name}.pkl")
+        with open(file_path, "rb") as f:
+            pose_keypoints = pickle.load(f)
+        return pose_keypoints
+
+    def read_video_wise_normal_keypoints(self, index: int):
+        pose_keypoints = self.read_keypoints(index)
+        yid = self.yids[index]
+        video_range = self.yid2range[yid]
+        pose_keypoints[:, :, 0] /= video_range[1] - video_range[0] + 1e-5
+        pose_keypoints[:, :, 1] /= video_range[3] - video_range[2] + 1e-5
+        pose_keypoints[:, :, :2] = pose_keypoints[:, :, :2] * 2 - 1
+        return pose_keypoints
+
     def read_pose_files(self, index: int):
         # MMPose 76
         body_sample_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -329,50 +370,41 @@ class SignDataset(Dataset):
                               [50]
 
         # read files
-        vid_name = self.video_names[index]
-        file_path = os.path.join(self.feat_path, f"{vid_name}.pkl")
-        with open(file_path, "rb") as f:
-            pose_keypoints = pickle.load(f)  # T K(133) C
-            norm_pose_keypoints = self.normalize_joints(pose_keypoints)
+        pose_keypoints = self.read_video_wise_normal_keypoints(index)
 
         # 23(17+6) 11 selected
         body_pose = pose_keypoints[:, body_sample_indices, :]
         hand_right = pose_keypoints[:, 91:112, :]  # 21 Keypoints
         hand_left = pose_keypoints[:, 112:, :]  # 21 Keypoints
         face = pose_keypoints[:, face_sample_indices, :]  # 23 Keypoints
-        norm_hands = norm_pose_keypoints[:, 91:, :]
-        norm_face = norm_pose_keypoints[:, face_sample_indices, :]  # 23 Keypoints
+
+        represnt_hands = pose_keypoints[:, [91, 112], :]
+        represent_face = pose_keypoints[:, [50, 85, 42, 47], :]
 
         def norm_pose(pose):
             return (pose[:, :, 0] ** 2 + pose[:, :, 1] ** 2) ** 0.5
 
-        velocity_hands = np.diff(norm_hands[:, :, :2], axis=0)
-        velocity_face = np.diff(norm_face[:, :, :2], axis=0)
+        velocity_hands = np.diff(represnt_hands[:, :, :2], axis=0)
+        velocity_face = np.diff(represent_face[:, :, :2], axis=0)
 
         accel_hands = np.diff(velocity_hands, axis=0)
         accel_face = np.diff(velocity_face, axis=0)
 
         velocity_cated = np.concatenate((
-            norm_pose(velocity_hands).max(axis=1, keepdims=True),
-            norm_pose(velocity_face).max(axis=1, keepdims=True)),
+            norm_pose(velocity_hands).sum(axis=1, keepdims=True),
+            norm_pose(velocity_face).sum(axis=1, keepdims=True)),
         axis=1)
         velocity_max = np.max(velocity_cated, axis=0)
-        velocity_min = np.min(velocity_cated, axis=0)
 
         accel_cated = np.concatenate((
-            norm_pose(accel_hands).max(axis=1, keepdims=True),
-            norm_pose(accel_face).max(axis=1, keepdims=True)),
+            norm_pose(accel_hands).sum(axis=1, keepdims=True),
+            norm_pose(accel_face).sum(axis=1, keepdims=True)),
         axis=1)
-        try:
-            accel_max = np.max(accel_cated, axis=0)
-            accel_min = np.min(accel_cated, axis=0)
-        except:
-            print(norm_pose_keypoints.shape)
-            print(accel_cated.shape)
-            assert(False)
+        accel_max = np.max(accel_cated, axis=0)
 
-        pause = np.mean(velocity_cated <= np.array([0.015, 0.002]), axis=0)
-        prosody_label = np.concatenate((velocity_max, velocity_min, accel_max, accel_min, pause), axis=0)
+        # pause = np.mean(velocity_cated <= np.array([0.015, 0.002]), axis=0)
+        prosody_label = np.concatenate(
+            (velocity_max, accel_max), axis=0)
 
         pose_tuple = (body_pose, hand_left, hand_right, face)
         pose_cated = np.concatenate(
@@ -467,10 +499,10 @@ class SignDataset(Dataset):
             agy = np.random.randint(-60, 60)
             s = np.random.uniform(0.5, 1.5)
             # augmentation
-            visual_prefix[:, :, :2] = self.rand_view_transform(
-                visual_prefix[:, :, :2], agx, agy, s)[:, :, :2]
-            visual_prefix[:, :, :2] = self.normalize_joints(
-                visual_prefix[:, :, :2])
+            # visual_prefix[:, :, :2] = self.rand_view_transform(
+            #     visual_prefix[:, :, :2], agx, agy, s)[:, :, :2]
+            # visual_prefix[:, :, :2] = self.normalize_joints(
+            #     visual_prefix[:, :, :2])
             assert visual_prefix.shape[0] >= self.visual_token_num, "{} {}".format(visual_prefix.shape[0], self.visual_token_num)
             # reorder [T V C] -> [C T V]
             visual_prefix = np.transpose(visual_prefix, (2, 0, 1))
@@ -479,8 +511,8 @@ class SignDataset(Dataset):
         elif self.phase == "test":
             raw_translation = self.translation[index]
             visual_prefix, visual_length = self.read_pose_files(index)
-            visual_prefix[:, :, :2] = self.normalize_joints(
-                visual_prefix[:, :, :2])
+            # visual_prefix[:, :, :2] = self.normalize_joints(
+            #     visual_prefix[:, :, :2])
             # reorder [T V C] -> [C T V]
             visual_prefix = np.transpose(visual_prefix, (2, 0, 1))
             visual_prefix = torch.from_numpy(visual_prefix)

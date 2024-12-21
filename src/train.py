@@ -91,7 +91,7 @@ def main(args, configs, configs_ft):
     for epoch in tqdm(range(step_count, total_step + n_epochs_decay), desc="Training"):    # outer loop for different epochs; we save the model by <epoch_count>, <epoch_count>+<save_latest_freq>
         epoch_iter = 0                  # the number of training iterations in current epoch, reset to 0 every epoch
         model.update_learning_rate()    # update learning rates in the beginning of every epoch.
-        for batchs in tqdm(loader, leave=False, desc=f"EPOCH {epoch}"):  # inner loop within one epoch
+        for batchs in tqdm(loader, leave=True, desc=f"EPOCH {epoch}"):  # inner loop within one epoch
             for batch in batchs:
 
                 total_iters += len(batch)
@@ -105,12 +105,18 @@ def main(args, configs, configs_ft):
                     lr_dict = model.get_learning_rate()
                     log.update(lr_dict)
 
-                    loss_G = model.loss_G_audio
-                    loss_D = model.loss_D_audio
+                    # loss_G = model.loss_G_audio
+                    # loss_D = model.loss_D_audio
 
-                    log["loss/G_audio"] = loss_G
-                    log["loss/D_audio"] = loss_D
-                    log["loss/prosody"] = model.loss_prosody
+                    # log["GAN loss/G"] = loss_G
+                    # log["GAN loss/D"] = loss_D
+                    log["prosody loss/total"] = model.loss_prosody
+                    log["prosody loss/v_max_loss"] = model.v_max_loss
+                    # log["prosody loss/v_min_loss"] = model.v_min_loss
+                    log["prosody loss/a_max_loss"] = model.a_max_loss
+                    # log["prosody loss/a_min_loss"] = model.a_min_loss
+                    # log["prosody loss/pause"] = model.pause_loss
+                    log["proosdy pred[0]"] = model.pred_prosody_label[0][0]
 
                     # log["loss/total_reconstruction"] = model.total_loss_reconstruction
                     # log["loss/mel_reconstruction"] = model.mel_loss_reconstruction
@@ -152,6 +158,8 @@ def main(args, configs, configs_ft):
                     sf.write(
                         run_dir + f"wav_wo_sign/synth_{total_iters // synth_step}.wav",
                         wav_prediction, samplerate=sampling_rate)
+                    del output, output_lens, mel_len, mel_prediction, wav_prediction, raw_text
+                    torch.cuda.empty_cache()
 
                 if args.use_wandb and total_iters % log_step == 0:
                     wandb.log(log)
