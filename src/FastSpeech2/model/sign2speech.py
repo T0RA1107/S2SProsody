@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from FastSpeech2.transformer.Models import S2SMixer
+from FastSpeech2.model.modules import VarianceAdaptorWithReference
 from FastSpeech2.utils.tools import get_mask_from_lengths
 from .fastspeech2 import FastSpeech2
 
@@ -23,6 +24,7 @@ class Sign2Speech(FastSpeech2):
             nn.init.zeros_(param)
             assert torch.all(param == 0.), f"{name} is not initialized to 0"
 
+        self.variance_adaptor = VarianceAdaptorWithReference(self.variance_adaptor)
         self.dim_visual = self.sign_processer.feat_dim
         self.dim_embedding = self.s2s_mixier.d_model
         if self.dim_visual != self.dim_embedding:
@@ -82,28 +84,52 @@ class Sign2Speech(FastSpeech2):
         if key_point is not None:
             sign_embbeding = self.sign_processer(key_point)  # [B, C, T, V] -> [B, T, C]
             sign_embbeding = self.visual_project(sign_embbeding)
-            output = self.s2s_mixier(output, sign_embbeding)
+            output_crsattn = self.s2s_mixier(output, sign_embbeding)
 
-        (
-            output,
-            p_predictions,
-            e_predictions,
-            log_d_predictions,
-            d_rounded,
-            mel_lens,
-            mel_masks,
-        ) = self.variance_adaptor(
-            output,
-            src_masks,
-            mel_masks,
-            max_mel_len,
-            p_targets,
-            e_targets,
-            d_targets,
-            p_control,
-            e_control,
-            d_control,
-        )
+            (
+                output,
+                p_predictions,
+                e_predictions,
+                log_d_predictions,
+                d_rounded,
+                mel_lens,
+                mel_masks,
+            ) = self.variance_adaptor(
+                output,
+                output_crsattn,
+                src_masks,
+                mel_masks,
+                max_mel_len,
+                p_targets,
+                e_targets,
+                d_targets,
+                p_control,
+                e_control,
+                d_control,
+            )
+        else:
+            (
+                output,
+                p_predictions,
+                e_predictions,
+                log_d_predictions,
+                d_rounded,
+                mel_lens,
+                mel_masks,
+            ) = self.variance_adaptor(
+                output,
+                output,
+                src_masks,
+                mel_masks,
+                max_mel_len,
+                p_targets,
+                e_targets,
+                d_targets,
+                p_control,
+                e_control,
+                d_control,
+            )
+
         output, mel_masks = self.decoder(output, mel_masks)
         output = self.mel_linear(output)
 

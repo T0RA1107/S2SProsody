@@ -112,10 +112,12 @@ def main(args, configs, configs_ft):
                     # log["GAN loss/D"] = loss_D
                     log["prosody loss/total"] = model.loss_prosody
                     log["prosody loss/v_max_loss"] = model.v_max_loss
-                    # log["prosody loss/v_min_loss"] = model.v_min_loss
                     log["prosody loss/a_max_loss"] = model.a_max_loss
-                    # log["prosody loss/a_min_loss"] = model.a_min_loss
-                    # log["prosody loss/pause"] = model.pause_loss
+
+                    log["prosody loss without sign/total"] = model.loss_prosody_wo_sign
+                    log["prosody loss without sign/v_max_loss"] = model.v_max_loss_wo_sign
+                    log["prosody loss without sign/a_max_loss"] = model.a_max_loss_wo_sign
+
                     log["proosdy pred[0]"] = model.pred_prosody_label[0][0]
 
                     # log["loss/total_reconstruction"] = model.total_loss_reconstruction

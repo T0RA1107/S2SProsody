@@ -50,7 +50,7 @@ D_audio:
 
 multi_speaker: True
 
-max_seq_len: 1000
+max_seq_len: 5000
 
 vocoder:
   model: "HiFi-GAN" # support 'HiFi-GAN', 'MelGAN'

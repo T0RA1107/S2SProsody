@@ -6,11 +6,11 @@ path:
 fine-tuning: "./FastSpeech2/config/VCTK"
 
 optimizer:
-  batch_size: 64 # 16
-  lr_G_s2a: 0.00001
+  batch_size: 16 # 16
+  lr_G_s2a: 0.001
   lr_D_a: 0.001
   lr_fine-tuning: 0.001
-  betas: [0.9, 0.98]
+  betas: [0.5, 0.9]
   eps: 0.000000001
   weight_decay: 0.0
   grad_clip_thresh: 1.0
@@ -18,6 +18,15 @@ optimizer:
   warm_up_step: 4000
   anneal_steps: [300000, 400000, 500000]
   anneal_rate: 0.3
+
+loss:
+  weight:
+    reconstruction: 0.8
+
+discriminator:
+  noise:
+    mean: 0.0
+    std: 0.5
 
 dataset:
   serial_batches: False
@@ -28,13 +37,13 @@ GAN:
   lr_policy: cosine
   lr_decay_iters: 50
 
-gpu_ids: [0, 1, 2]
+gpu_ids: [0]
 
 step:
-  total_step: 100 # 900000
+  total_step: 10 # 900000
   step_count: 0
   log_step: 100
-  synth_step: 100
+  synth_step: 1000
   val_step: 1000
-  save_step: 1000
+  save_step: 100000
   n_epochs_decay: 0

@@ -306,22 +306,17 @@ class SemiCycleGANModel(BaseModel):
             # self.criterionCycle = torch.nn.L1Loss()
             # self.criterionIdt = torch.nn.L1Loss()
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
-            train_parameters = list(self.netG_sign2audio.parameters())
+            # train_parameters = list(self.netG_sign2audio.parameters())
+            train_parameters = []
+            train_layers = ["sign_processer", "s2s_mixier", "visual_project"]
+            for name, param in self.netG_sign2audio.named_parameters():
+                if any(layer_name in name for layer_name in train_layers):
+                    train_parameters.append(param)
             train_parameters += list(self.netProsody_estimator.parameters())
-            # train_parameters = []
-            # train_layers = ["sign_processer", "s2s_mixier", "visual_project"]
-            # for name, param in self.netG_sign2audio.named_parameters():
-            #     if any(layer_name in name for layer_name in train_layers):
-            #         train_parameters.append(param)
-            # train_parameters += list(self.netProsody_estimator.parameters())
 
             self.optimizer_G = torch.optim.Adam(train_parameters,
                                                 lr=train_config["optimizer"]["lr_G_s2a"],
                                                 betas=train_config["optimizer"]["betas"])
-            # self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_sign2audio.parameters(),
-            #                                                     self.audio2sign.parameters()),
-            #                                     lr=train_config["optimizer"]["lr"],
-            #                                     betas=train_config["optimizer"]["betas"])
             self.optimizer_D = torch.optim.Adam(self.netD_audio.parameters(),
                                                 lr=train_config["optimizer"]["lr_D_a"],
                                                 betas=train_config["optimizer"]["betas"])
@@ -395,7 +390,7 @@ class SemiCycleGANModel(BaseModel):
                 _,
                 postnet_output,
                 _,
-                _,
+                e_predictions,
                 _,
                 _,
                 _,
@@ -415,6 +410,8 @@ class SemiCycleGANModel(BaseModel):
                 mel_masks.unsqueeze(2).repeat(1, 1, postnet_output.shape[2]), 0.0).unsqueeze(1)
 
             self.synth_audio_lens = mel_lens.detach().cpu()
+            # self.pred_prosody_label_wo_sign = self.netProsody_estimator(self.synth_audio)
+            self.pred_prosody_label_wo_sign = self.netProsody_estimator(e_predictions.unsqueeze(1))
 
         (
             _,
@@ -446,7 +443,9 @@ class SemiCycleGANModel(BaseModel):
         # e_bucket = torch.bucketize(e_predictions, self.netG_sign2audio.variance_adaptor.energy_bins)
         # self.e_histogram = torch.histc(e_bucket, bins=n_bins, min=0, max=n_bins-1)
         # self.e_histogram /= self.e_histogram.sum() + 1e-5
+        # self.pred_prosody_label = self.netProsody_estimator(self.fake_audio_with_sign)
         self.pred_prosody_label = self.netProsody_estimator(e_predictions.unsqueeze(1))
+
 
         # synthesize audio for reconstruction
         # self.fake_audio_GT = self.netG_sign2audio(
@@ -532,6 +531,12 @@ class SemiCycleGANModel(BaseModel):
         self.v_max_loss = loss_prosody[:, :2].mean().detach().cpu()
         self.a_max_loss = loss_prosody[:, 2:4].mean().detach().cpu()
         loss_prosody = loss_prosody.mean()
+
+        with torch.no_grad():
+            loss_prosody_wo_sign = self.criterionProsody(self.pred_prosody_label_wo_sign, self.prosody_label)
+            self.v_max_loss_wo_sign = loss_prosody_wo_sign[:, :2].mean().detach().cpu()
+            self.a_max_loss_wo_sign = loss_prosody_wo_sign[:, 2:4].mean().detach().cpu()
+            self.loss_prosody_wo_sign = loss_prosody_wo_sign.mean().detach().cpu()
         # combined loss and calculate gradients
         # loss_G = loss_G_audio
         loss_G = 0.
@@ -544,7 +549,7 @@ class SemiCycleGANModel(BaseModel):
 
         loss_G.backward()
         # del fake_audio, pred_fake, loss_G_audio,
-        del loss_prosody, loss_G
+        del loss_prosody, loss_G, loss_prosody_wo_sign
         torch.cuda.empty_cache()
 
     def calc_confusion_matrix(self):
