@@ -23,7 +23,7 @@ class Sign2Speech(FastSpeech2):
         for name, param in self.s2s_mixier.named_parameters():
             nn.init.zeros_(param)
             assert torch.all(param == 0.), f"{name} is not initialized to 0"
-
+        self.max_seq_len = model_config["max_seq_len"]
         self.variance_adaptor = VarianceAdaptorWithReference(self.variance_adaptor)
         self.dim_visual = self.sign_processer.feat_dim
         self.dim_embedding = self.s2s_mixier.d_model
@@ -67,6 +67,8 @@ class Sign2Speech(FastSpeech2):
         d_control=1.0,
         key_point=None  # [B, C, T, V]: Batch, Channels, Time, VisualKeypoints
     ):
+        if len(max_src_len.shape) > 0:
+            max_src_len = max_src_len[0]
         src_masks = get_mask_from_lengths(src_lens, max_src_len)
         mel_masks = (
             get_mask_from_lengths(mel_lens, max_mel_len)
@@ -134,6 +136,9 @@ class Sign2Speech(FastSpeech2):
         output = self.mel_linear(output)
 
         postnet_output = self.postnet(output) + output
+        output = F.pad(output, (0, 0, 0, self.max_seq_len - output.shape[1]))
+        postnet_output = F.pad(postnet_output, (0, 0, 0, self.max_seq_len - postnet_output.shape[1]))
+        mel_masks = F.pad(mel_masks, (0, self.max_seq_len - mel_masks.shape[1]), value=True)
 
         return (
             output,

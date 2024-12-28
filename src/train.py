@@ -3,7 +3,6 @@ import os
 import datetime
 
 from PIL import Image
-import seaborn as sns
 import matplotlib.pyplot as plt
 from io import BytesIO
 import soundfile as sf
@@ -11,7 +10,6 @@ import torch
 import yaml
 import torch.nn as nn
 from torch.utils.data import DataLoader
-# from torch.utils.tensorboard import SummaryWriter
 import wandb
 from tqdm import tqdm
 
@@ -55,12 +53,15 @@ def main(args, configs, configs_ft):
 
     dt_now = datetime.datetime.now()
     run_name = dt_now.strftime('%m:%d:%H:%M')
+    run_dir = f"./output/{run_name}/"
     if not args.without_save_wav:
-        run_dir = f"./output/{run_name}/"
         os.makedirs(run_dir, exist_ok=True)
         os.makedirs(run_dir + "wav_wo_sign/", exist_ok=True)
         os.makedirs(run_dir + "wav_w_sign/", exist_ok=True)
         pred_txt_file = run_dir + "pred.txt"
+    if args.save_ckpt:
+        os.makedirs(run_dir, exist_ok=True)
+        os.makedirs(run_dir + "ckpt", exist_ok=True)
 
     if args.use_wandb:
         wandb.init(
@@ -75,13 +76,12 @@ def main(args, configs, configs_ft):
             },
         )
 
-    grad_acc_step = train_config["optimizer"]["grad_acc_step"]
     grad_clip_thresh = train_config["optimizer"]["grad_clip_thresh"]
     total_step = train_config["step"]["total_step"]
     n_epochs_decay = train_config["step"]["n_epochs_decay"]
     step_count = train_config["step"]["step_count"]
     log_step = train_config["step"]["log_step"]
-    save_step = train_config["step"]["save_step"]
+    save_epochs = train_config["step"]["save_epochs"]
     synth_step = train_config["step"]["synth_step"]
     val_step = train_config["step"]["val_step"]
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
@@ -119,13 +119,6 @@ def main(args, configs, configs_ft):
                     log["prosody loss without sign/a_max_loss"] = model.a_max_loss_wo_sign
 
                     log["proosdy pred[0]"] = model.pred_prosody_label[0][0]
-
-                    # log["loss/total_reconstruction"] = model.total_loss_reconstruction
-                    # log["loss/mel_reconstruction"] = model.mel_loss_reconstruction
-                    # log["loss/postnet_mel_reconstruction"] = model.postnet_mel_loss_reconstruction
-                    # log["loss/pitch_reconstruction"] = model.pitch_loss_reconstruction
-                    # log["loss/energy_reconstruction"] = model.energy_loss_reconstruction
-                    # log["loss/duration_reconstruction"] = model.duration_loss_reconstruction
 
                 if total_iters % synth_step == 0 and not args.without_save_wav:
                     ### Save Audio conditioned by text and sign
@@ -166,10 +159,11 @@ def main(args, configs, configs_ft):
                 if args.use_wandb and total_iters % log_step == 0:
                     wandb.log(log)
 
-                # if total_iters % save_step == 0:   # cache our latest model every <save_latest_freq> iterations
-                #     print('saving the latest model (epoch %d, total_iters %d)' % (epoch, total_iters))
-                #     save_suffix = 'iter_%d' % total_iters
-                #     model.save_networks(save_suffix)
+        if args.save_ckpt and (epoch + 1) % save_epochs == 0:
+            print(f"saving the latest model {epoch=}")
+            ckpt_save_path = run_dir + f"ckpt/{epoch}.pth"
+            model.save_networks(ckpt_save_path)
+            return
 
 
 if __name__ == "__main__":
@@ -199,6 +193,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--restore_step_ft", type=int
+    )
+    parser.add_argument(
+        "--save_ckpt", action="store_true"
     )
     parser.add_argument(
         "--without_save_wav", action="store_true"
