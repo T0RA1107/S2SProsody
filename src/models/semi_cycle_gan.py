@@ -141,23 +141,21 @@ class BaseModel:
         else:
             self.__patch_instance_norm_state_dict(state_dict, getattr(module, key), keys, i + 1)
 
-    def load_networks(self, epoch):
+    def load_networks(self, save_path):
         """Load all the networks from the disk.
 
         Parameters:
             epoch (int) -- current epoch; used in the file name '%s_net_%s.pth' % (epoch, name)
         """
+        ckpt = torch.loat(save_path)
         for name in self.model_names:
             if isinstance(name, str):
-                load_filename = '%s_net_%s.pth' % (epoch, name)
-                load_path = os.path.join(self.save_dir, load_filename)
                 net = getattr(self, 'net' + name)
                 if isinstance(net, torch.nn.DataParallel):
                     net = net.module
-                print('loading the model from %s' % load_path)
                 # if you are using PyTorch newer than 0.4 (e.g., built from
                 # GitHub source), you can remove str() on self.device
-                state_dict = torch.load(load_path, map_location=str(self.device))
+                state_dict = ckpt[name]
                 if hasattr(state_dict, '_metadata'):
                     del state_dict._metadata
 
@@ -165,6 +163,24 @@ class BaseModel:
                 for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
                     self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))
                 net.load_state_dict(state_dict)
+
+    def save_networks(self, save_path):
+        """Save all the networks to the disk.
+
+        Parameters:
+            epoch (int) -- current epoch; used in the file name '%s_net_%s.pth' % (epoch, name)
+        """
+        param_dict = dict()
+        for name in self.model_names:
+            if isinstance(name, str):
+                net = getattr(self, "net" + name)
+
+                if len(self.gpu_ids) > 0 and torch.cuda.is_available():
+                    param_dict[name] = net.module.cpu().state_dict()
+                    net.cuda(self.gpu_ids[0])
+                else:
+                    param_dict[name] = net.cpu().state_dict()
+        torch.save(param_dict, save_path)
 
     def print_networks(self, verbose):
         """Print the total number of parameters in the network and (if verbose) network architecture
@@ -268,7 +284,7 @@ class SemiCycleGANModel(BaseModel):
         # self.netG_sign2audio = Sign2Speech(preprocess_config, model_config)
         self.netG_sign2audio = Sign2Speech(preprocess_config, model_config)
         self.model_names.append("G_sign2audio")
-        networks.init_net(self.netG_sign2audio, gpu_ids=self.gpu_ids)
+        self.netG_sign2audio = networks.init_net(self.netG_sign2audio, gpu_ids=self.gpu_ids)
         if configs_ft is not None:
             train_config_ft = configs_ft[2]
             ckpt_path = os.path.join(
@@ -277,7 +293,9 @@ class SemiCycleGANModel(BaseModel):
             )
             print(f"Load {ckpt_path}")
             ckpt = torch.load(ckpt_path)
-            self.netG_sign2audio.load_state_dict(ckpt["model"], strict=False)
+            # print(ckpt["model"])
+            self.netG_sign2audio.module.load_state_dict(ckpt["model"], strict=False)
+            # assert False
 
         self.audio2sign = None
 
@@ -291,9 +309,9 @@ class SemiCycleGANModel(BaseModel):
             self.model_names.append("D_audio")
 
             self.netProsody_estimator = ProsodyEstimator1D(
-                model_config["D_audio"]["input_nc"], 4
+                3, 4
             )
-            networks.init_net(self.netProsody_estimator, gpu_ids=self.gpu_ids)
+            self.netProsody_estimator = networks.init_net(self.netProsody_estimator, gpu_ids=self.gpu_ids)
 
             self.weight_reconstruction = train_config["loss"]["weight"]["reconstruction"]
             self.mean = train_config["discriminator"]["noise"]["mean"]
@@ -302,7 +320,7 @@ class SemiCycleGANModel(BaseModel):
             # define loss functions
             self.criterionGAN = networks.GANLoss(train_config["GAN"]["gan_mode"]).to(self.device, non_blocking=True)  # define GAN loss.
             self.criterionProsody = nn.MSELoss(reduction='none').to(self.device, non_blocking=True)
-            self.fastspeech2loss = FastSpeech2Loss(preprocess_config, model_config)
+            # self.fastspeech2loss = FastSpeech2Loss(preprocess_config, model_config)
             # self.criterionCycle = torch.nn.L1Loss()
             # self.criterionIdt = torch.nn.L1Loss()
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
@@ -389,9 +407,9 @@ class SemiCycleGANModel(BaseModel):
             (
                 _,
                 postnet_output,
-                _,
+                p_predictions,
                 e_predictions,
-                _,
+                log_d_predictions,
                 _,
                 _,
                 mel_masks,
@@ -401,8 +419,7 @@ class SemiCycleGANModel(BaseModel):
                 speakers,
                 text_tokens,
                 token_length,
-                max_src_len,
-                key_point=None
+                max_src_len.unsqueeze(0).repeat(batch_size),
             )
 
             self.synth_mel_masks = make_mask_from_lens(mel_lens, max_length=postnet_output.shape[1])
@@ -411,14 +428,19 @@ class SemiCycleGANModel(BaseModel):
 
             self.synth_audio_lens = mel_lens.detach().cpu()
             # self.pred_prosody_label_wo_sign = self.netProsody_estimator(self.synth_audio)
-            self.pred_prosody_label_wo_sign = self.netProsody_estimator(e_predictions.unsqueeze(1))
+            speech_prosody_predictions = torch.cat([
+                p_predictions.unsqueeze(1),
+                e_predictions.unsqueeze(1),
+                log_d_predictions.unsqueeze(1)
+            ], dim=1)
+            self.pred_prosody_label_wo_sign = self.netProsody_estimator(speech_prosody_predictions)
 
         (
             _,
             postnet_output,
-            _,  # p_predictions,
+            p_predictions,
             e_predictions,
-            _,
+            log_d_predictions,
             _,
             _,
             mel_masks,
@@ -428,7 +450,7 @@ class SemiCycleGANModel(BaseModel):
             speakers,
             text_tokens,
             token_length,
-            max_src_len,
+            max_src_len.unsqueeze(0).repeat(batch_size),
             key_point=visual_prefix.to(self.device, non_blocking=True)
         )  # G_A(A)
 
@@ -439,12 +461,12 @@ class SemiCycleGANModel(BaseModel):
 
         self.fake_audio_with_sign_lens = mel_lens
         self.speakers = speakers.detach().cpu()
-        # n_bins = self.netG_sign2audio.variance_adaptor.energy_bins.shape[0]
-        # e_bucket = torch.bucketize(e_predictions, self.netG_sign2audio.variance_adaptor.energy_bins)
-        # self.e_histogram = torch.histc(e_bucket, bins=n_bins, min=0, max=n_bins-1)
-        # self.e_histogram /= self.e_histogram.sum() + 1e-5
-        # self.pred_prosody_label = self.netProsody_estimator(self.fake_audio_with_sign)
-        self.pred_prosody_label = self.netProsody_estimator(e_predictions.unsqueeze(1))
+        speech_prosody_predictions = torch.cat([
+            p_predictions.unsqueeze(1),
+            e_predictions.unsqueeze(1),
+            log_d_predictions.unsqueeze(1)
+        ], dim=1)
+        self.pred_prosody_label = self.netProsody_estimator(speech_prosody_predictions)
 
 
         # synthesize audio for reconstruction
@@ -552,20 +574,20 @@ class SemiCycleGANModel(BaseModel):
         del loss_prosody, loss_G, loss_prosody_wo_sign
         torch.cuda.empty_cache()
 
-    def calc_confusion_matrix(self):
-        self.set_eval_mode()
-        real_audio = self.real_mels.to(self.device, non_blocking=True)
-        pred_real = self.netD_audio(self.augmentation_audio(real_audio.unsqueeze(1), self.real_mel_masks))
-        pred_fake = self.netD_audio(self.augmentation_audio(self.fake_audio_with_sign, self.fake_mel_masks))
-        pred_real = (pred_real >= 0.5).sum().detach().cpu()
-        pred_fake = (pred_fake >= 0.5).sum().detach().cpu()
+    # def calc_confusion_matrix(self):
+    #     self.set_eval_mode()
+    #     real_audio = self.real_mels.to(self.device, non_blocking=True)
+    #     pred_real = self.netD_audio(self.augmentation_audio(real_audio.unsqueeze(1), self.real_mel_masks))
+    #     pred_fake = self.netD_audio(self.augmentation_audio(self.fake_audio_with_sign, self.fake_mel_masks))
+    #     pred_real = (pred_real >= 0.5).sum().detach().cpu()
+    #     pred_fake = (pred_fake >= 0.5).sum().detach().cpu()
 
-        bs = real_audio.shape[0]
-        cm = np.array([
-            [pred_fake, bs - pred_fake],
-            [bs - pred_real, pred_real]
-        ])
-        return cm
+    #     bs = real_audio.shape[0]
+    #     cm = np.array([
+    #         [pred_fake, bs - pred_fake],
+    #         [bs - pred_real, pred_real]
+    #     ])
+    #     return cm
 
     def optimize_parameters(self):
         """Calculate losses, gradients, and update network weights; called in every training iteration"""
