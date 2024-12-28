@@ -212,7 +212,7 @@ class BaseModel:
             print(f'{name}: learning rate {old_lr:.7f} -> {lr:.7f}')
 
     def get_learning_rate(self):
-        lr_dict = {}
+        lr_dict = dict()
         for i, name  in enumerate(self.model_names):
             lr = self.optimizers[i].param_groups[0]['lr']
             lr_dict[name] = lr
@@ -293,9 +293,7 @@ class SemiCycleGANModel(BaseModel):
             )
             print(f"Load {ckpt_path}")
             ckpt = torch.load(ckpt_path)
-            # print(ckpt["model"])
             self.netG_sign2audio.module.load_state_dict(ckpt["model"], strict=False)
-            # assert False
 
         self.audio2sign = None
 
@@ -312,6 +310,7 @@ class SemiCycleGANModel(BaseModel):
                 3, 4
             )
             self.netProsody_estimator = networks.init_net(self.netProsody_estimator, gpu_ids=self.gpu_ids)
+            self.model_names.append("ProsodyEstimator1D")
 
             self.weight_reconstruction = train_config["loss"]["weight"]["reconstruction"]
             self.mean = train_config["discriminator"]["noise"]["mean"]
@@ -320,10 +319,6 @@ class SemiCycleGANModel(BaseModel):
             # define loss functions
             self.criterionGAN = networks.GANLoss(train_config["GAN"]["gan_mode"]).to(self.device, non_blocking=True)  # define GAN loss.
             self.criterionProsody = nn.MSELoss(reduction='none').to(self.device, non_blocking=True)
-            # self.fastspeech2loss = FastSpeech2Loss(preprocess_config, model_config)
-            # self.criterionCycle = torch.nn.L1Loss()
-            # self.criterionIdt = torch.nn.L1Loss()
-            # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             # train_parameters = list(self.netG_sign2audio.parameters())
             train_parameters = []
             train_layers = ["sign_processer", "s2s_mixier", "visual_project"]
@@ -351,46 +346,6 @@ class SemiCycleGANModel(BaseModel):
         self.fake_raw_texts = self.real_sign[0]
         self.fake_text_lens = self.real_sign[4]
         self.prosody_label = self.real_sign[6].to(self.device, non_blocking=True)
-
-        ###  Real Audio  ###
-        # self.real_audio = inputs["audio"]
-        # self.real_ids = self.real_audio[0]
-        # self.real_raw_texts = self.real_audio[1]
-        # self.real_speakers = self.real_audio[2].long().to(self.device, non_blocking=True)
-        # self.real_texts = self.real_audio[3].long().to(self.device, non_blocking=True)
-        # self.real_text_lens = self.real_audio[4].long().to(self.device, non_blocking=True)
-        # self.real_max_text_lens = torch.Tensor(self.real_audio[5]).long().to(self.device, non_blocking=True)
-        # self.real_mels = self.real_audio[6].float().to(self.device, non_blocking=True)
-        # self.real_audio_lens = self.real_audio[7].long().to(self.device, non_blocking=True)
-        # self.real_max_mel_lens = torch.Tensor(self.real_audio[8]).long().to(self.device, non_blocking=True)
-        # self.real_pitches = self.real_audio[9].float().to(self.device, non_blocking=True)
-        # self.real_energies = self.real_audio[10].float().to(self.device, non_blocking=True)
-        # self.real_durations = self.real_audio[11].long().to(self.device, non_blocking=True)
-        # self.real_mel_masks = make_mask_from_lens(self.real_audio_lens, self.real_max_mel_lens)
-
-        # self.real_audio = (
-        #     self.real_ids,
-        #     self.real_raw_texts,
-        #     self.real_speakers,
-        #     self.real_texts,
-        #     self.real_text_lens,
-        #     self.real_max_text_lens,
-        #     self.real_mels,
-        #     self.real_audio_lens,
-        #     self.real_max_mel_lens,
-        #     self.real_pitches,
-        #     self.real_energies,
-        #     self.real_durations
-        # )
-        ###  Real Audio  ###
-
-        # self.set_eval_mode()
-        # self.real_speaker_text_embedding = self.netG_sign2audio.text_encoding(
-        #     self.real_speakers.to(self.device, non_blocking=True),
-        #     self.real_texts.to(self.device, non_blocking=True),
-        #     self.real_text_lens.to(self.device, non_blocking=True),
-        #     self.real_max_text_lens.to(self.device, non_blocking=True),
-        # )
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
@@ -468,23 +423,6 @@ class SemiCycleGANModel(BaseModel):
         ], dim=1)
         self.pred_prosody_label = self.netProsody_estimator(speech_prosody_predictions)
 
-
-        # synthesize audio for reconstruction
-        # self.fake_audio_GT = self.netG_sign2audio(
-        #     self.real_speakers,
-        #     self.real_texts,
-        #     self.real_text_lens,
-        #     self.real_max_text_lens,
-        #     mel_lens=self.real_audio_lens,
-        #     max_mel_len=self.real_max_mel_lens,
-        #     p_targets=self.real_pitches,
-        #     e_targets=self.real_energies,
-        #     d_targets=self.real_durations,
-        #     key_point=None
-        # )
-
-        # self.rec_sign = self.audio2sign(self.fake_audio)   # G_B(G_A(A))
-        del speakers, text_tokens, token_length, max_src_len
         torch.cuda.empty_cache()
 
     def augmentation_audio(self, audio, mask):
@@ -513,9 +451,9 @@ class SemiCycleGANModel(BaseModel):
         # Combined loss and calculate gradients
         loss_D = (loss_D_real + loss_D_fake) * 0.5
         loss_D.backward()
-        self.loss_D_audio = loss_D.detach().cpu()
-        del pred_real, loss_D_real, pred_fake, loss_D_fake, loss_D
+        loss_D = loss_D.detach().cpu()
         torch.cuda.empty_cache()
+        return loss_D
 
     def backward_D_audio(self):
         """Calculate GAN loss for discriminator D_A"""
@@ -523,87 +461,66 @@ class SemiCycleGANModel(BaseModel):
             self.fake_audio_with_sign.detach().cpu()).to(
                 self.device, non_blocking=True)
         real_audio = self.synth_audio
-        self.backward_D_basic(
+        loss_D = self.backward_D_basic(
             self.netD_audio,
             real_audio,
             fake_audio.unsqueeze(1)
         )
-        del fake_audio, real_audio
         torch.cuda.empty_cache()
+        return { "GAN loss/D": loss_D }
 
     def backward_G(self):
         """Calculate the loss for generators G_A and G_B"""
+        loss_log = dict()
 
         # GAN loss D_audio(G_sign2audio(sign))
         # fake_audio = self.fake_audio_with_sign
         # pred_fake = self.netD_audio(self.augmentation_audio(fake_audio, self.fake_mel_masks))
         # loss_G_audio = self.criterionGAN(pred_fake, True)
         # self.loss_G_audio = loss_G_audio.detach().cpu()
-        # reconstruct GT audio
-        # loss_G_reconstruction = self.fastspeech2loss(self.real_audio, self.fake_audio_GT)
-        # self.total_loss_reconstruction = loss_G_reconstruction[0].detach().cpu()
-        # self.mel_loss_reconstruction = loss_G_reconstruction[1].detach().cpu()
-        # self.postnet_mel_loss_reconstruction = loss_G_reconstruction[2].detach().cpu()
-        # self.pitch_loss_reconstruction = loss_G_reconstruction[3].detach().cpu()
-        # self.energy_loss_reconstruction = loss_G_reconstruction[4].detach().cpu()
-        # self.duration_loss_reconstruction = loss_G_reconstruction[5].detach().cpu()
 
         # Forward cycle loss || G_B(G_A(A)) - A||
         loss_prosody = self.criterionProsody(self.pred_prosody_label, self.prosody_label)
-        self.v_max_loss = loss_prosody[:, :2].mean().detach().cpu()
-        self.a_max_loss = loss_prosody[:, 2:4].mean().detach().cpu()
+        loss_log["prosody loss/v_max_loss"] = loss_prosody[:, :2].mean().detach().cpu()
+        loss_log["prosody loss/a_max_loss"] = loss_prosody[:, 2:4].mean().detach().cpu()
+
         loss_prosody = loss_prosody.mean()
+        loss_log["prosody loss/total"] = loss_prosody.detach().cpu()
 
         with torch.no_grad():
             loss_prosody_wo_sign = self.criterionProsody(self.pred_prosody_label_wo_sign, self.prosody_label)
-            self.v_max_loss_wo_sign = loss_prosody_wo_sign[:, :2].mean().detach().cpu()
-            self.a_max_loss_wo_sign = loss_prosody_wo_sign[:, 2:4].mean().detach().cpu()
-            self.loss_prosody_wo_sign = loss_prosody_wo_sign.mean().detach().cpu()
+            loss_log["prosody loss without sign/v_max_loss"] = loss_prosody_wo_sign[:, :2].mean().detach().cpu()
+            loss_log["prosody loss without sign/a_max_loss"] = loss_prosody_wo_sign[:, 2:4].mean().detach().cpu()
+            loss_log["prosody loss without sign/total"] = loss_prosody_wo_sign.mean().detach().cpu()
         # combined loss and calculate gradients
         # loss_G = loss_G_audio
         loss_G = 0.
-        # loss_G += loss_G_reconstruction[0] * self.weight_reconstruction
         loss_G += loss_prosody
 
-        self.loss_prosody = loss_prosody.detach().cpu()
-
-        # self.loss_G = loss_G.detach().cpu()
-
         loss_G.backward()
-        # del fake_audio, pred_fake, loss_G_audio,
-        del loss_prosody, loss_G, loss_prosody_wo_sign
+
         torch.cuda.empty_cache()
-
-    # def calc_confusion_matrix(self):
-    #     self.set_eval_mode()
-    #     real_audio = self.real_mels.to(self.device, non_blocking=True)
-    #     pred_real = self.netD_audio(self.augmentation_audio(real_audio.unsqueeze(1), self.real_mel_masks))
-    #     pred_fake = self.netD_audio(self.augmentation_audio(self.fake_audio_with_sign, self.fake_mel_masks))
-    #     pred_real = (pred_real >= 0.5).sum().detach().cpu()
-    #     pred_fake = (pred_fake >= 0.5).sum().detach().cpu()
-
-    #     bs = real_audio.shape[0]
-    #     cm = np.array([
-    #         [pred_fake, bs - pred_fake],
-    #         [bs - pred_real, pred_real]
-    #     ])
-    #     return cm
+        return loss_log
 
     def optimize_parameters(self):
         """Calculate losses, gradients, and update network weights; called in every training iteration"""
+        loss_log = dict()
         self.set_train_mode()
         # forward
         self.forward()      # compute fake images and reconstruction images.
         # G_A and G_B
         self.set_requires_grad([self.netD_audio], False)  # Ds require no gradients when optimizing Gs
         self.optimizer_G.zero_grad(set_to_none=True)  # set G's gradients to zero
-        self.backward_G()             # calculate gradients for G
+        loss_log_G = self.backward_G()             # calculate gradients for G
+        loss_log.update(loss_log_G)
         self.optimizer_G.step()       # update G's weights
         # if self.step == 0:
         #     # D_A and D_B
         #     self.set_requires_grad([self.netD_audio], True)
         #     self.optimizer_D.zero_grad(set_to_none=True)   # set D's gradients to zero
-        #     self.backward_D_audio()      # calculate gradients for D_audio
+        #     loss_log_D = self.backward_D_audio()      # calculate gradients for D_audio
+        #     loss_log.update(loss_log_D)
         #     self.optimizer_D.step()  # update D_A and D_B's weights
         # self.step = (self.step + 1) % 2
         torch.cuda.empty_cache()
+        return loss_log

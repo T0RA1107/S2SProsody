@@ -97,28 +97,14 @@ def main(args, configs, configs_ft):
                 total_iters += len(batch)
                 epoch_iter += len(batch)
                 model.set_input(batch)         # unpack data from dataset and apply preprocessing
-                model.optimize_parameters()   # calculate loss functions, get gradients, update network weights
+                loss_log = model.optimize_parameters()   # calculate loss functions, get gradients, update network weights
 
 
                 if total_iters % log_step == 0:    # print training losses and save logging information to the disk
                     log = { "epoch": epoch }
                     lr_dict = model.get_learning_rate()
                     log.update(lr_dict)
-
-                    # loss_G = model.loss_G_audio
-                    # loss_D = model.loss_D_audio
-
-                    # log["GAN loss/G"] = loss_G
-                    # log["GAN loss/D"] = loss_D
-                    log["prosody loss/total"] = model.loss_prosody
-                    log["prosody loss/v_max_loss"] = model.v_max_loss
-                    log["prosody loss/a_max_loss"] = model.a_max_loss
-
-                    log["prosody loss without sign/total"] = model.loss_prosody_wo_sign
-                    log["prosody loss without sign/v_max_loss"] = model.v_max_loss_wo_sign
-                    log["prosody loss without sign/a_max_loss"] = model.a_max_loss_wo_sign
-
-                    log["proosdy pred[0]"] = model.pred_prosody_label[0][0]
+                    log.update(loss_log)
 
                 if total_iters % synth_step == 0 and not args.without_save_wav:
                     ### Save Audio conditioned by text and sign
