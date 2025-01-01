@@ -3,6 +3,7 @@ import json
 import os
 from string import punctuation
 import random
+from collections import namedtuple
 from multiprocessing import Pool
 
 import math
@@ -16,6 +17,11 @@ from g2p_en import G2p
 
 from FastSpeech2.text import text_to_sequence
 from FastSpeech2.utils.tools import pad_1D, pad_2D
+
+
+AudioData = namedtuple("AudioData", "ids raw_texts speakers texts text_lens max_text_lens mels mel_lens max_mel_lens pitches energies durations")
+SignTrainData = namedtuple("SignTrainData", "raw_texts text_tokens mask visual_prefix token_length visual_length prosody_label")
+SignTestData = namedtuple("SignTestData", "raw_texts visual_prefix index visual_length")
 
 
 def read_lexicon(lex_path):
@@ -161,7 +167,7 @@ class AudioDataset(Dataset):
         energies = torch.from_numpy(pad_1D(energies))
         durations = torch.from_numpy(pad_1D(durations))
 
-        return (
+        return AudioData(
             ids,
             raw_texts,
             speakers,
@@ -402,7 +408,6 @@ class SignDataset(Dataset):
         axis=1)
         accel_max = np.max(accel_cated, axis=0)
 
-        # pause = np.mean(velocity_cated <= np.array([0.015, 0.002]), axis=0)
         prosody_label = np.concatenate(
             (velocity_max, accel_max), axis=0)
 
@@ -491,7 +496,7 @@ class SignDataset(Dataset):
 
     def __getitem__(self, index: int):
         if self.phase == "train":
-            raw_translation = self.translation[index]
+            raw_texts = self.translation[index]
             text_tokens, mask, token_length = self.pad_token_ids(
                 index)  # [max_seq_len]
             visual_prefix, visual_length, prosody_label = self.read_pose_files(index)
@@ -507,9 +512,9 @@ class SignDataset(Dataset):
             # reorder [T V C] -> [C T V]
             visual_prefix = np.transpose(visual_prefix, (2, 0, 1))
             # vn_idxs, vn_len = self.get_vn(index)
-            return raw_translation, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label  # , vn_idxs, vn_len
+            return SignTrainData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label)  # , vn_idxs, vn_len
         elif self.phase == "test":
-            raw_translation = self.translation[index]
+            raw_texts = self.translation[index]
             visual_prefix, visual_length = self.read_pose_files(index)
             # visual_prefix[:, :, :2] = self.normalize_joints(
             #     visual_prefix[:, :, :2])
@@ -517,7 +522,7 @@ class SignDataset(Dataset):
             visual_prefix = np.transpose(visual_prefix, (2, 0, 1))
             visual_prefix = torch.from_numpy(visual_prefix)
             visual_prefix = visual_prefix.type(torch.FloatTensor)
-            return raw_translation, visual_prefix, index, visual_length
+            return raw_texts, visual_prefix, index, visual_length
 
     def reprocess(self, raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, idxs):
         raw_texts = [raw_texts[idx] for idx in idxs]
@@ -528,7 +533,7 @@ class SignDataset(Dataset):
         visual_length = torch.from_numpy(np.array([visual_length[idx] for idx in idxs]))
         prosody_label = torch.from_numpy(np.array([prosody_label[idx] for idx in idxs])).float()
 
-        return raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label
+        return SignTrainData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label)
 
     def collate_fn(self, data):
         data_size = len(data)

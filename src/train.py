@@ -112,33 +112,41 @@ def main(args, configs, configs_ft):
                     output_lens = model.fake_audio_with_sign_lens
                     raw_text = model.fake_raw_texts[0]
                     mel_len = output_lens[0].item()
-                    mel_prediction = output[0, :, :mel_len].detach().transpose(1, 2)
-                    wav_prediction = vocoder_infer(
-                        mel_prediction,
-                        vocoder,
-                        model_config,
-                        preprocess_config,
-                    )[0]
-                    sf.write(
-                        run_dir + f"wav_w_sign/synth_{total_iters // synth_step}.wav",
-                        wav_prediction, samplerate=sampling_rate)
-                    with open(pred_txt_file, "a") as f:
-                        f.write(raw_text + "\n")
+                    if mel_len == 0:
+                        print("0 length mel occured")
+                        print(raw_text)
+                    else:
+                        mel_prediction = output[0, :, :mel_len].detach().transpose(1, 2)
+                        wav_prediction = vocoder_infer(
+                            mel_prediction,
+                            vocoder,
+                            model_config,
+                            preprocess_config,
+                        )[0]
+                        sf.write(
+                            run_dir + f"wav_w_sign/synth_{total_iters // synth_step}.wav",
+                            wav_prediction, samplerate=sampling_rate)
+                        with open(pred_txt_file, "a") as f:
+                            f.write(raw_text + "\n")
 
                     ### Save Audio conditioned by only text
                     output = model.synth_audio
                     output_lens = model.synth_audio_lens
                     mel_len = output_lens[0].item()
-                    mel_prediction = output[0, :, :mel_len].detach().transpose(1, 2)
-                    wav_prediction = vocoder_infer(
-                        mel_prediction,
-                        vocoder,
-                        model_config,
-                        preprocess_config,
-                    )[0]
-                    sf.write(
-                        run_dir + f"wav_wo_sign/synth_{total_iters // synth_step}.wav",
-                        wav_prediction, samplerate=sampling_rate)
+                    if mel_len == 0:
+                        print("0 length mel occured")
+                        print(raw_text)
+                    else:
+                        mel_prediction = output[0, :, :mel_len].detach().transpose(1, 2)
+                        wav_prediction = vocoder_infer(
+                            mel_prediction,
+                            vocoder,
+                            model_config,
+                            preprocess_config,
+                        )[0]
+                        sf.write(
+                            run_dir + f"wav_wo_sign/synth_{total_iters // synth_step}.wav",
+                            wav_prediction, samplerate=sampling_rate)
                     del output, output_lens, mel_len, mel_prediction, wav_prediction, raw_text
                     torch.cuda.empty_cache()
 

@@ -1,3 +1,4 @@
+from collections import namedtuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,6 +9,18 @@ from FastSpeech2.utils.tools import get_mask_from_lengths
 from .fastspeech2 import FastSpeech2
 
 from GloFE.models.pose_backbones import PartedPoseBackbone
+
+SpeechPrediction = namedtuple("SpeechPrediction",
+                              "output\
+                              postnet_output\
+                              p_predictions\
+                              e_predictions\
+                              log_d_predictions\
+                              d_rounded\
+                              src_masks\
+                              mel_masks\
+                              src_lens\
+                              mel_lens")
 
 
 class Sign2Speech(FastSpeech2):
@@ -140,7 +153,7 @@ class Sign2Speech(FastSpeech2):
         postnet_output = F.pad(postnet_output, (0, 0, 0, self.max_seq_len - postnet_output.shape[1]))
         mel_masks = F.pad(mel_masks, (0, self.max_seq_len - mel_masks.shape[1]), value=True)
 
-        return (
+        return SpeechPrediction(
             output,
             postnet_output,
             p_predictions,
