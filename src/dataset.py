@@ -211,6 +211,9 @@ class SignDataset(Dataset):
         self.drop_last = drop_last
         self.batch_size = train_config["optimizer"]["batch_size"]
         self.phase = phase
+        self.prosody_dist = train_config["loss"]["prosody"]["dist"]
+        if self.prosody_dist:
+            self.prosody_bins = train_config["loss"]["prosody"]["bins"]
 
         # path to openasl
         self.feat_path = preprocess_config["preprocessing_sign"]["feat_path"]
@@ -366,6 +369,53 @@ class SignDataset(Dataset):
         pose_keypoints[:, :, :2] = pose_keypoints[:, :, :2] * 2 - 1
         return pose_keypoints
 
+    def make_prosody_label(self, pose_keypoints):
+        represnt_hands = pose_keypoints[:, [91, 112], :]
+        represent_face = pose_keypoints[:, [50, 85, 42, 47], :]
+
+        def norm_pose(pose):
+            return (pose[:, :, 0] ** 2 + pose[:, :, 1] ** 2) ** 0.5
+
+        velocity_hands = np.diff(represnt_hands[:, :, :2], axis=0)
+        velocity_face = np.diff(represent_face[:, :, :2], axis=0)
+
+        accel_hands = np.diff(velocity_hands, axis=0)
+        accel_face = np.diff(velocity_face, axis=0)
+
+        velocity_cated = np.concatenate((
+            norm_pose(velocity_hands).sum(axis=1, keepdims=True),
+            norm_pose(velocity_face).sum(axis=1, keepdims=True)),
+        axis=1)
+
+        accel_cated = np.concatenate((
+            norm_pose(accel_hands).sum(axis=1, keepdims=True),
+            norm_pose(accel_face).sum(axis=1, keepdims=True)),
+        axis=1)
+
+        if not self.prosody_dist:
+            velocity_max = np.max(velocity_cated, axis=0)
+            accel_max = np.max(accel_cated, axis=0)
+            prosody_label = np.concatenate(
+                (velocity_max, accel_max), axis=0)
+        else:
+            v_max = 2 * 2 ** 0.5
+            a_max = 4 * 2 ** 0.5
+            bins = self.prosody_bins
+            eps = 1e-4
+            v_edges = np.linspace(np.log(eps), np.log(v_max), bins + 1)
+            a_edges = np.linspace(np.log(eps), np.log(a_max), bins + 1)
+            log_v = np.log(velocity_cated + eps)
+            log_a = np.log(accel_cated + eps)
+            hist = np.concatenate((
+                np.histogram(log_v[:, 0], bins=v_edges)[0][None,],
+                np.histogram(log_v[:, 1], bins=v_edges)[0][None,],
+                np.histogram(log_a[:, 0], bins=a_edges)[0][None,],
+                np.histogram(log_a[:, 1], bins=a_edges)[0][None,],), axis=0)
+            prosody_label = hist.astype(np.float32) / hist.sum(axis=1, keepdims=True)
+            assert prosody_label.shape == (4, bins)
+
+        return prosody_label
+
     def read_pose_files(self, index: int):
         # MMPose 76
         body_sample_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -384,32 +434,7 @@ class SignDataset(Dataset):
         hand_left = pose_keypoints[:, 112:, :]  # 21 Keypoints
         face = pose_keypoints[:, face_sample_indices, :]  # 23 Keypoints
 
-        represnt_hands = pose_keypoints[:, [91, 112], :]
-        represent_face = pose_keypoints[:, [50, 85, 42, 47], :]
-
-        def norm_pose(pose):
-            return (pose[:, :, 0] ** 2 + pose[:, :, 1] ** 2) ** 0.5
-
-        velocity_hands = np.diff(represnt_hands[:, :, :2], axis=0)
-        velocity_face = np.diff(represent_face[:, :, :2], axis=0)
-
-        accel_hands = np.diff(velocity_hands, axis=0)
-        accel_face = np.diff(velocity_face, axis=0)
-
-        velocity_cated = np.concatenate((
-            norm_pose(velocity_hands).sum(axis=1, keepdims=True),
-            norm_pose(velocity_face).sum(axis=1, keepdims=True)),
-        axis=1)
-        velocity_max = np.max(velocity_cated, axis=0)
-
-        accel_cated = np.concatenate((
-            norm_pose(accel_hands).sum(axis=1, keepdims=True),
-            norm_pose(accel_face).sum(axis=1, keepdims=True)),
-        axis=1)
-        accel_max = np.max(accel_cated, axis=0)
-
-        prosody_label = np.concatenate(
-            (velocity_max, accel_max), axis=0)
+        prosody_label = self.make_prosody_label(pose_keypoints)
 
         pose_tuple = (body_pose, hand_left, hand_right, face)
         pose_cated = np.concatenate(

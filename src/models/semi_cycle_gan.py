@@ -8,7 +8,7 @@ import numpy as np
 from util.audio_pool import AudioPool
 from . import networks
 from .sign2audio import Sign2Speech
-from .prosody_estimator import ProsodyEstimator1D, ProsodyEstimator2D
+from .prosody_estimator import ProsodyEstimator1D, ProsodyEstimator2D, ProsodyDistEstimator1D
 
 from FastSpeech2.model.loss import FastSpeech2Loss
 
@@ -251,6 +251,7 @@ class SemiCycleGANModel(BaseModel):
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         BaseModel.__init__(self, args, preprocess_config, model_config, train_config, isTrain)
+        self.prosody_dist = train_config["loss"]["prosody"]["dist"]
 
         # define networks (both Generators and discriminators)
         # The naming is different from those used in the paper.
@@ -280,8 +281,8 @@ class SemiCycleGANModel(BaseModel):
                 model_config["D_audio"]["init_type"], model_config["D_audio"]["init_gain"], train_config["gpu_ids"])
             self.model_names.append("D_audio")
 
-            self.netProsody_estimator = ProsodyEstimator1D(
-                3, 4
+            self.netProsody_estimator = ProsodyDistEstimator1D(
+                3, train_config["loss"]["prosody"]["bins"], 4
             )
             self.netProsody_estimator = networks.init_net(self.netProsody_estimator, gpu_ids=self.gpu_ids)
             self.model_names.append("Prosody_estimator")
@@ -292,7 +293,8 @@ class SemiCycleGANModel(BaseModel):
             self.fake_audio_pool = AudioPool(train_config["GAN"]["pool_size"])  # create image buffer to store previously generated images
             # define loss functions
             self.criterionGAN = networks.GANLoss(train_config["GAN"]["gan_mode"]).to(self.device, non_blocking=True)  # define GAN loss.
-            self.criterionProsody = nn.MSELoss(reduction='none').to(self.device, non_blocking=True)
+            # self.criterionProsody = nn.MSELoss(reduction='none').to(self.device, non_blocking=True)
+            self.criterionProsody = nn.CrossEntropyLoss().to(self.device, non_blocking=True)
             # train_parameters = list(self.netG_sign2audio.parameters())
             train_parameters = []
             train_layers = ["sign_processer", "s2s_mixier", "visual_project"]
@@ -431,18 +433,18 @@ class SemiCycleGANModel(BaseModel):
         loss_log["GAN loss/G"] = loss_G_audio.detach().cpu()
 
         # Forward cycle loss || G_B(G_A(A)) - A||
-        loss_prosody = self.criterionProsody(self.pred_prosody_label, self.prosody_label)
-        loss_log["prosody loss/v_max_loss"] = loss_prosody[:, :2].mean().detach().cpu()
-        loss_log["prosody loss/a_max_loss"] = loss_prosody[:, 2:4].mean().detach().cpu()
+        loss_prosody = [self.criterionProsody(self.pred_prosody_label[i], self.prosody_label[:, i]) for i in range(len(self.pred_prosody_label))]
+        loss_log["prosody loss/v_loss"] = sum(loss_prosody[:2]).detach().cpu() / 2.
+        loss_log["prosody loss/a_loss"] = sum(loss_prosody[2:4]).detach().cpu() / 2.
 
-        loss_prosody = loss_prosody.mean()
+        loss_prosody = sum(loss_prosody) / 4.
         loss_log["prosody loss/total"] = loss_prosody.detach().cpu()
 
         with torch.no_grad():
-            loss_prosody_wo_sign = self.criterionProsody(self.pred_prosody_label_wo_sign, self.prosody_label)
-            loss_log["prosody loss without sign/v_max_loss"] = loss_prosody_wo_sign[:, :2].mean().detach().cpu()
-            loss_log["prosody loss without sign/a_max_loss"] = loss_prosody_wo_sign[:, 2:4].mean().detach().cpu()
-            loss_log["prosody loss without sign/total"] = loss_prosody_wo_sign.mean().detach().cpu()
+            loss_prosody_wo_sign = [self.criterionProsody(self.pred_prosody_label_wo_sign[i], self.prosody_label[:, i]) for i in range(len(self.pred_prosody_label_wo_sign))]
+            loss_log["prosody loss without sign/v_loss"] = sum(loss_prosody_wo_sign[:2]).detach().cpu() / 2.
+            loss_log["prosody loss without sign/a_loss"] = sum(loss_prosody_wo_sign[2:4]).detach().cpu() / 2.
+            loss_log["prosody loss without sign/total"] = sum(loss_prosody_wo_sign).detach().cpu() / 4.
         # combined loss and calculate gradients
         loss_G = loss_G_audio
         loss_G += loss_prosody
