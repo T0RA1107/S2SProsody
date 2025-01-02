@@ -280,6 +280,7 @@ class SemiCycleGANModel(BaseModel):
                 model_config["D_audio"]["n_layers_D"], model_config["D_audio"]["norm"],
                 model_config["D_audio"]["init_type"], model_config["D_audio"]["init_gain"], train_config["gpu_ids"])
             self.model_names.append("D_audio")
+            self.loss_log_D = {}
 
             self.netProsody_estimator = ProsodyDistEstimator1D(
                 3, train_config["loss"]["prosody"]["bins"], 4
@@ -470,9 +471,9 @@ class SemiCycleGANModel(BaseModel):
             # D_A and D_B
             self.set_requires_grad([self.netD_audio], True)
             self.optimizer_D.zero_grad(set_to_none=True)   # set D's gradients to zero
-            loss_log_D = self.backward_D_audio()      # calculate gradients for D_audio
-            loss_log.update(loss_log_D)
+            self.loss_log_D = self.backward_D_audio()      # calculate gradients for D_audio
             self.optimizer_D.step()  # update D_A and D_B's weights
         self.step = (self.step + 1) % 2
+        loss_log.update(self.loss_log_D)
         torch.cuda.empty_cache()
         return loss_log
