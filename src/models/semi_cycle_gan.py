@@ -281,6 +281,7 @@ class SemiCycleGANModel(BaseModel):
                 model_config["D_audio"]["init_type"], model_config["D_audio"]["init_gain"], train_config["gpu_ids"])
             self.model_names.append("D_audio")
             self.loss_log_D = {}
+            self.weight_prosody = train_config["loss"]["weight"]["prosody"]
 
             self.netProsody_estimator = ProsodyDistEstimator1D(
                 3, train_config["loss"]["prosody"]["bins"], 4
@@ -288,7 +289,6 @@ class SemiCycleGANModel(BaseModel):
             self.netProsody_estimator = networks.init_net(self.netProsody_estimator, gpu_ids=self.gpu_ids)
             self.model_names.append("Prosody_estimator")
 
-            self.weight_reconstruction = train_config["loss"]["weight"]["reconstruction"]
             self.mean = train_config["discriminator"]["noise"]["mean"]
             self.std = train_config["discriminator"]["noise"]["std"]
             self.fake_audio_pool = AudioPool(train_config["GAN"]["pool_size"])  # create image buffer to store previously generated images
@@ -448,7 +448,7 @@ class SemiCycleGANModel(BaseModel):
             loss_log["prosody loss without sign/total"] = sum(loss_prosody_wo_sign).detach().cpu() / 4.
         # combined loss and calculate gradients
         loss_G = loss_G_audio
-        loss_G += loss_prosody
+        loss_G += loss_prosody * self.weight_prosody
 
         loss_G.backward()
 
