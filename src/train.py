@@ -49,7 +49,7 @@ def main(args, configs, configs_ft):
     if args.ngpus > 1:
         # init DDP
         distributed = True
-        dist.init_process_group(backend='nccl')
+        dist.init_process_group(backend="nccl")
         args.local_rank = dist.get_rank()
         torch.cuda.set_device(args.local_rank)
     else:
@@ -61,7 +61,7 @@ def main(args, configs, configs_ft):
     init_random_seeds(args.seed, args.local_rank)
 
     dataset = UnpairedAudioSignDataset(
-        "train.txt", preprocess_config, train_config, args)  # create a dataset given opt.dataset_mode and other options
+        "train.txt", preprocess_config, train_config, model_config, args)  # create a dataset given opt.dataset_mode and other options
     if distributed:
         sampler = torch.utils.data.distributed.DistributedSampler(
             dataset, num_replicas=args.ngpus, rank=args.local_rank)
@@ -83,7 +83,7 @@ def main(args, configs, configs_ft):
     )
     if args.local_rank == 0:
         print("Batch size:", batch_size)
-        print('The number of training images = %d' % dataset_size)
+        print("The number of training images = %d" % dataset_size)
 
     model = SemiCycleGANModel(args, preprocess_config, model_config, train_config, configs_ft, distributed=distributed)      # create a model given opt.model and other options
     model.setup(train_config)               # regular setup: load and print networks; create schedulers
@@ -92,7 +92,7 @@ def main(args, configs, configs_ft):
     vocoder = get_vocoder(model_config, device)
 
     dt_now = datetime.datetime.now()
-    run_name = dt_now.strftime('%m:%d:%H:%M')
+    run_name = dt_now.strftime("%m:%d:%H:%M")
     run_dir = f"./output/{run_name}/"
     if args.local_rank == 0 and not args.without_save_wav:
         os.makedirs(run_dir, exist_ok=True)
@@ -105,8 +105,8 @@ def main(args, configs, configs_ft):
 
     if args.local_rank == 0 and args.use_wandb:
         wandb.init(
-            project='Sign2Speech',
-            group="weak prosody reconstruction",
+            project="Sign2Speech",
+            group="S2S GAN",
             job_type="training",
             name=run_name,
             config={
@@ -244,11 +244,11 @@ if __name__ == "__main__":
         "--without_save_wav", action="store_true"
     )
     # DDP related
-    parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--ngpus', type=int, default=1,
-                        help='number of gpus used, equivilent to world_size(local)')
-    parser.add_argument('--local_rank', type=int, default=0,
-                        help='pass rank info throughout the script, DO NOT input through command line')
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--ngpus", type=int, default=1,
+                        help="number of gpus used, equivilent to world_size(local)")
+    parser.add_argument("--local_rank", type=int, default=0,
+                        help="pass rank info throughout the script, DO NOT input through command line")
     args = parser.parse_args()
 
     # Read Config

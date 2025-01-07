@@ -124,7 +124,7 @@ class BaseModel:
         for name in self.model_names:
             if isinstance(name, str):
                 net = getattr(self, "net" + name)
-                if isinstance(net, torch.nn.DataParallel):
+                if isinstance(net, torch.nn.parallel.DistributedDataParallel):
                     net = net.module
                 # if you are using PyTorch newer than 0.4 (e.g., built from
                 # GitHub source), you can remove str() on self.device
@@ -272,7 +272,10 @@ class SemiCycleGANModel(BaseModel):
             if args.local_rank == 0:
                 print(f"Load {ckpt_path}")
             ckpt = torch.load(ckpt_path)
-            self.netG_sign2audio.module.load_state_dict(ckpt["model"], strict=False)
+            if isinstance(self.netG_sign2audio, torch.nn.parallel.DistributedDataParallel):
+                self.netG_sign2audio.module.load_state_dict(ckpt["model"], strict=False)
+            else:
+                self.netG_sign2audio.load_state_dict(ckpt["model"], strict=False)
 
         self.audio2sign = None
 
@@ -312,9 +315,9 @@ class SemiCycleGANModel(BaseModel):
             self.optimizer_G = torch.optim.Adam(train_parameters,
                                                 lr=train_config["optimizer"]["lr_G_s2a"],
                                                 betas=train_config["optimizer"]["betas"])
-            self.optimizer_D = torch.optim.Adam(self.netD_audio.parameters(),
+            self.optimizer_D = torch.optim.SGD(self.netD_audio.parameters(),
                                                 lr=train_config["optimizer"]["lr_D_a"],
-                                                betas=train_config["optimizer"]["betas"])
+                                                momentum=0.9)
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
 
@@ -329,11 +332,13 @@ class SemiCycleGANModel(BaseModel):
         self.fake_text_lens = self.real_sign.token_length
         self.prosody_label = self.real_sign.prosody_label.to(self.device, non_blocking=True)
 
+        self.real_audio = inputs["audio"]
+
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
         batch_size = self.real_sign.text_tokens.shape[0]
         token_length = self.real_sign.token_length.to(self.device, non_blocking=True)
-        max_src_len = token_length.max()
+        max_src_len = token_length.max().to(self.device, non_blocking=True)
         text_tokens = self.real_sign.text_tokens[:, :max_src_len].to(self.device, non_blocking=True)
 
         speakers = torch.full((batch_size,), self.target_speaker, device=self.device).long()
@@ -344,7 +349,7 @@ class SemiCycleGANModel(BaseModel):
                 speakers,
                 text_tokens,
                 token_length,
-                max_src_len.unsqueeze(0).repeat(batch_size),
+                max_src_len,
             )
 
             self.synth_mel_masks = make_mask_from_lens(pred.mel_lens,
@@ -365,7 +370,7 @@ class SemiCycleGANModel(BaseModel):
             speakers,
             text_tokens,
             token_length,
-            max_src_len.unsqueeze(0).repeat(batch_size),
+            max_src_len,
             key_point=self.real_sign.visual_prefix.to(self.device, non_blocking=True)
         )
 
@@ -416,14 +421,19 @@ class SemiCycleGANModel(BaseModel):
 
     def backward_D_audio(self):
         """Calculate GAN loss for discriminator D_A"""
-        fake_audio = self.fake_audio_pool.query(
-            self.fake_audio_with_sign.detach().cpu()).to(
-                self.device, non_blocking=True)
-        real_audio = self.synth_audio
+        fake_audio, fake_audio_lens = self.fake_audio_pool.query(
+            self.fake_audio_with_sign.detach().cpu(),
+            self.fake_audio_with_sign_lens.detach().cpu()
+            )
+        fake_audio = fake_audio.to(self.device, non_blocking=True)
+
+        real_audio = self.real_audio.mels.float().to(self.device, non_blocking=True)
+        real_audio_lens = self.real_audio.mel_lens
+        input_len = min(min(fake_audio_lens), min(real_audio_lens))
         loss_D = self.backward_D_basic(
             self.netD_audio,
-            real_audio,
-            fake_audio.unsqueeze(1)
+            real_audio[:, :input_len].unsqueeze(1),
+            fake_audio[:, :input_len].unsqueeze(1)
         )
         torch.cuda.empty_cache()
         return { "GAN loss/D": loss_D }

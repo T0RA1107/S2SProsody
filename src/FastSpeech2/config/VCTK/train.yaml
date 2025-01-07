@@ -1,5 +1,5 @@
 path:
-  ckpt_path: "/home/ubuntu/slocal/S2SProsody/src/FastSpeech2/output/ckpt/VCTK.best"
+  ckpt_path: "/home/ubuntu/slocal/S2SProsody/src/FastSpeech2/output/ckpt/VCTK"
   log_path: "./output/log/VCTK"
   result_path: "./output/result/VCTK"
 

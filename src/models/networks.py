@@ -122,10 +122,8 @@ def init_net(net, args=None, distributed=False, init_type='normal', init_gain=0.
             output_device=rank,
             find_unused_parameters=True
         )
-    elif len(gpu_ids) > 0:
-        assert(torch.cuda.is_available())
-        net.to(gpu_ids[0])
-        net = torch.nn.DataParallel(net, gpu_ids)  # multi-GPUs
+    else:
+        net.to(torch.device("cuda:0"))
     init_weights(net, args, init_type, init_gain=init_gain)
     return net
 
@@ -629,7 +627,8 @@ class AudioDiscriminator(nn.Module):
         padw = 1
         sequence = [
             nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw),
-            nn.LeakyReLU(0.2, True)]
+            nn.LeakyReLU(0.2, True),
+            nn.Dropout2d()]
         nf_mult = 1
         nf_mult_prev = 1
         for n in range(1, n_layers):  # gradually increase the number of filters
@@ -638,7 +637,8 @@ class AudioDiscriminator(nn.Module):
             sequence += [
                 nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
                 norm_layer(ndf * nf_mult),
-                nn.LeakyReLU(0.2, True)
+                nn.LeakyReLU(0.2, True),
+                nn.Dropout2d()
             ]
 
         nf_mult_prev = nf_mult
@@ -646,7 +646,8 @@ class AudioDiscriminator(nn.Module):
         sequence += [
             nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
             norm_layer(ndf * nf_mult),
-            nn.LeakyReLU(0.2, True)
+            nn.LeakyReLU(0.2, True),
+            nn.Dropout2d()
         ]
 
         # sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map

@@ -1,5 +1,5 @@
 # export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:100
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
 dataset=Sign2Speech
 GPUS=3
 CUDA_VISIBLE_DEVICES=0,1,2 torchrun --nnodes=1 --nproc_per_node=$GPUS train.py\

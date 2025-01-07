@@ -66,7 +66,7 @@ def write_txt(pack):
 
 class AudioDataset(Dataset):
     def __init__(
-        self, filename, preprocess_config, train_config, sort=False, drop_last=False
+        self, filename, preprocess_config, train_config, model_config, sort=False, drop_last=False,
     ):
         self.dataset_name = preprocess_config["dataset"]
         self.preprocessed_path = preprocess_config["path"]["preprocessed_path"]
@@ -79,6 +79,21 @@ class AudioDataset(Dataset):
         with open(os.path.join(self.preprocessed_path, "speakers.json")) as f:
             self.speaker_map = json.load(f)
             self.speaker_num = len(self.speaker_map)
+
+        self.target_speaker = model_config["speaker"]["female"]
+        basename_, speaker_, text_, raw_text_ = [], [], [], []
+        for i in range(len(self.text)):
+            if self.speaker_map[self.speaker[i]] != self.target_speaker:
+                continue
+            basename_.append(self.basename[i])
+            speaker_.append(self.speaker[i])
+            text_.append(self.text[i])
+            raw_text_.append(self.raw_text[i])
+        self.basename = basename_
+        self.speaker = speaker_
+        self.text = text_
+        self.raw_text = raw_text_
+
         self.sort = sort
         self.drop_last = drop_last
 
@@ -593,9 +608,9 @@ class SignDataset(Dataset):
 
 class UnpairedAudioSignDataset(Dataset):
 
-    def __init__(self, filename, preprocess_config, train_config,
+    def __init__(self, filename, preprocess_config, train_config, model_config,
                  args, phase="train", split="train", partial_list_path=None):
-        self.audio_dataset = AudioDataset(filename, preprocess_config, train_config)
+        self.audio_dataset = AudioDataset(filename, preprocess_config, train_config, model_config)
         self.sign_dataset = SignDataset(args, preprocess_config, train_config, phase, split, partial_list_path)
 
         self.audio_size = len(self.audio_dataset)

@@ -40,8 +40,9 @@ class AudioPool():
         if self.pool_size > 0:  # create an empty pool
             self.num_audios = 0
             self.audios = []
+            self.audio_lens = []
 
-    def query(self, audios):
+    def query(self, audios, audio_lens):
         """Return an image from the pool.
 
         Parameters:
@@ -54,23 +55,31 @@ class AudioPool():
         and insert the current audios to the buffer.
         """
         if self.pool_size == 0:  # if the buffer size is 0, do nothing
-            return audios
+            return audios, audio_lens
         return_audios = []
-        for audio in audios:
-            audio = torch.squeeze(audio.data, 0)
+        return_audio_lens = []
+        for audio, audio_len in zip(audios, audio_lens):
+            audio = torch.squeeze(audio, 0)
+            audio_len = torch.squeeze(audio_len, 0)
             if self.num_audios < self.pool_size:   # if the buffer is not full; keep inserting current audios to the buffer
                 self.num_audios = self.num_audios + 1
                 self.audios.append(audio)
+                self.audio_lens.append(audio_len)
                 return_audios.append(audio)
+                return_audio_lens.append(audio_len)
             else:
                 p = random.uniform(0, 1)
                 if p > 0.5:  # by 50% chance, the buffer will return a previously stored image, and insert the current image into the buffer
                     random_id = random.randint(0, self.pool_size - 1)  # randint is inclusive
-                    tmp = self.audios[random_id].clone()
+                    tmp_audio = self.audios[random_id].clone()
+                    tmp_audio_len = self.audio_lens[random_id].clone()
                     self.audios[random_id] = audio
-                    return_audios.append(tmp)
+                    self.audio_lens[random_id] = audio_len
+                    return_audios.append(tmp_audio)
+                    return_audio_lens.append(tmp_audio_len)
                 else:       # by another 50% chance, the buffer will return the current image
                     return_audios.append(audio)
+                    return_audio_lens.append(audio_len)
         # return_audios = torch.cat(return_audios, 0)   # collect all the audios and return
         return_audios = pad_2D(return_audios)
-        return return_audios
+        return return_audios, return_audio_lens
