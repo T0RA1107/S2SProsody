@@ -20,7 +20,7 @@ from FastSpeech2.utils.tools import pad_1D, pad_2D
 
 
 AudioData = namedtuple("AudioData", "ids raw_texts speakers texts text_lens max_text_lens mels mel_lens max_mel_lens pitches energies durations")
-SignTrainData = namedtuple("SignTrainData", "raw_texts text_tokens mask visual_prefix token_length visual_length prosody_label")
+SignTrainData = namedtuple("SignTrainData", "raw_texts text_tokens mask visual_prefix token_length visual_length prosody_label video_names")
 SignTestData = namedtuple("SignTestData", "raw_texts visual_prefix index visual_length")
 
 
@@ -138,8 +138,7 @@ class AudioDataset(Dataset):
             text = []
             raw_text = []
             lines = f.readlines()
-            l = len(lines)
-            for line in tqdm(lines, desc="process meta data of Audio", total=l):
+            for line in lines:
                 n, s, t, r = line.strip("\n").split("|")
                 name.append(n)
                 speaker.append(s)
@@ -220,7 +219,7 @@ class SignDataset(Dataset):
         self.label_path = preprocess_config["preprocessing_sign"]["label_path"]
         assert self.feat_path is not None and self.feat_path is not None
 
-        self.local_rank = 0
+        self.local_rank = args.local_rank
         self.eos_token = preprocess_config["preprocessing_sign"]["eos_token"]
         # information about input clips (features)
         self.visual_token_num = preprocess_config["preprocessing_sign"]["clip_length"]
@@ -229,8 +228,7 @@ class SignDataset(Dataset):
 
         # label_path = os.path.join(f"/mnt/workspace/openasl-pre/openasl-v1.0.tsv")
         assert self.label_path is not None, "Specify --label_path"
-        data_frame = pd.read_csv(self.label_path, sep="\t")
-        print(len(data_frame))
+        data_frame = pd.read_csv(self.label_path, sep="\t", low_memory=False)
 
         if partial_list_path is not None:
             partial_mp4_list = open(partial_list_path).readlines()
@@ -295,12 +293,10 @@ class SignDataset(Dataset):
             self.translation_token_ids = [np.array([]) for _ in range(len(self.translation))]
             trans_ids_txt_list = ["" for _ in range(len(self.translation))]
 
-            with tqdm(total=len(self.translation), desc="preprocess sign translation") as t:
-                for i, trans_ids, trans_ids_txt in pool.imap_unordered(write_txt, enumerate(zip(self.video_names, self.translation, [preprocess_config] * len(self.translation)))):
-                    self.translation_token_ids[i] = np.array(trans_ids)
-                    trans_ids_txt_list[i] = trans_ids_txt
-                    token_id_lens[i] = len(self.translation_token_ids[i])
-                    t.update(1)
+            for i, trans_ids, trans_ids_txt in pool.imap_unordered(write_txt, enumerate(zip(self.video_names, self.translation, [preprocess_config] * len(self.translation)))):
+                self.translation_token_ids[i] = np.array(trans_ids)
+                trans_ids_txt_list[i] = trans_ids_txt
+                token_id_lens[i] = len(self.translation_token_ids[i])
             with open(preprocess_config["preprocessing_sign"]["translation_token_ids"], "w") as f:
                 f.writelines(trans_ids_txt_list)
 
@@ -525,6 +521,7 @@ class SignDataset(Dataset):
             text_tokens, mask, token_length = self.pad_token_ids(
                 index)  # [max_seq_len]
             visual_prefix, visual_length, prosody_label = self.read_pose_files(index)
+            video_name = self.video_names[index]
             agx = np.random.randint(-60, 60)
             agy = np.random.randint(-60, 60)
             s = np.random.uniform(0.5, 1.5)
@@ -537,7 +534,7 @@ class SignDataset(Dataset):
             # reorder [T V C] -> [C T V]
             visual_prefix = np.transpose(visual_prefix, (2, 0, 1))
             # vn_idxs, vn_len = self.get_vn(index)
-            return SignTrainData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label)  # , vn_idxs, vn_len
+            return SignTrainData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, video_name)  # , vn_idxs, vn_len
         elif self.phase == "test":
             raw_texts = self.translation[index]
             visual_prefix, visual_length = self.read_pose_files(index)
@@ -549,7 +546,7 @@ class SignDataset(Dataset):
             visual_prefix = visual_prefix.type(torch.FloatTensor)
             return raw_texts, visual_prefix, index, visual_length
 
-    def reprocess(self, raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, idxs):
+    def reprocess(self, raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, video_names, idxs):
         raw_texts = [raw_texts[idx] for idx in idxs]
         text_tokens = torch.from_numpy(np.array([text_tokens[idx] for idx in idxs])).long()
         mask = torch.from_numpy(np.array([mask[idx] for idx in idxs])).float()
@@ -557,8 +554,10 @@ class SignDataset(Dataset):
         token_length = torch.from_numpy(np.array([token_length[idx] for idx in idxs]))
         visual_length = torch.from_numpy(np.array([visual_length[idx] for idx in idxs]))
         prosody_label = torch.from_numpy(np.array([prosody_label[idx] for idx in idxs])).float()
+        video_names = [video_names[idx] for idx in idxs]
 
-        return SignTrainData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label)
+
+        return SignTrainData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, video_names)
 
     def collate_fn(self, data):
         data_size = len(data)
@@ -582,11 +581,12 @@ class SignDataset(Dataset):
         token_length = np.stack([d[4] for d in data], axis=0)
         visual_length = [d[5] for d in data]
         prosody_label = np.stack([d[6] for d in data], axis=0)
+        video_names = [d[7] for d in data]
 
         output = list()
         for idx in idx_arr:
             output.append(self.reprocess(
-                raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, idx))
+                raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, video_names, idx))
 
         return output
 

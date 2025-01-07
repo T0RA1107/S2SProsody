@@ -53,7 +53,9 @@ class BaseModel:
         self.speaker_num = model_config["speaker_num"]
         self.gpu_ids = train_config["gpu_ids"]
         self.isTrain = isTrain
-        self.device = torch.device('cuda:{}'.format(self.gpu_ids[0])) if self.gpu_ids else torch.device('cpu')  # get device name: CPU or GPU
+        self.local_rank = args.local_rank
+        self.dist = args.ngpus > 1
+        self.device = torch.device(f"cuda:{args.local_rank}") if self.gpu_ids else torch.device("cpu")  # get device name: CPU or GPU
         self.save_dir = train_config["path"]["ckpt_path"]  # save all the checkpoints to save_dir
         torch.backends.cudnn.benchmark = True
         self.loss_names = []
@@ -61,7 +63,6 @@ class BaseModel:
         self.visual_names = []
         self.optimizers = []
         self.image_paths = []
-        self.metric = 0  # used for learning rate policy 'plateau'
 
 
     def setup(self, train_config):
@@ -73,7 +74,7 @@ class BaseModel:
         if self.isTrain:
             self.schedulers = [networks.get_scheduler(optimizer, train_config) for optimizer in self.optimizers]
         # if not self.isTrain or args.continue_train:
-        #     load_suffix = 'iter_%d' % args.load_iter if args.load_iter > 0 else args.epoch
+        #     load_suffix = "iter_%d" % args.load_iter if args.load_iter > 0 else args.epoch
         #     self.load_networks(load_suffix)
         # self.print_networks(args.verbose)
 
@@ -81,14 +82,14 @@ class BaseModel:
         """Make models train mode"""
         for name in self.model_names:
             if isinstance(name, str):
-                net = getattr(self, 'net' + name)
+                net = getattr(self, "net" + name)
                 net.train()
 
     def set_eval_mode(self):
         """Make models eval mode during test time"""
         for name in self.model_names:
             if isinstance(name, str):
-                net = getattr(self, 'net' + name)
+                net = getattr(self, "net" + name)
                 net.eval()
 
     def get_current_losses(self):
@@ -96,20 +97,20 @@ class BaseModel:
         errors_ret = OrderedDict()
         for name in self.loss_names:
             if isinstance(name, str):
-                errors_ret[name] = float(getattr(self, 'loss_' + name))  # float(...) works for both scalar tensor and float number
+                errors_ret[name] = float(getattr(self, "loss_" + name))  # float(...) works for both scalar tensor and float number
         return errors_ret
 
     def __patch_instance_norm_state_dict(self, state_dict, module, keys, i=0):
         """Fix InstanceNorm checkpoints incompatibility (prior to 0.4)"""
         key = keys[i]
         if i + 1 == len(keys):  # at the end, pointing to a parameter/buffer
-            if module.__class__.__name__.startswith('InstanceNorm') and \
-                    (key == 'running_mean' or key == 'running_var'):
+            if module.__class__.__name__.startswith("InstanceNorm") and \
+                    (key == "running_mean" or key == "running_var"):
                 if getattr(module, key) is None:
-                    state_dict.pop('.'.join(keys))
-            if module.__class__.__name__.startswith('InstanceNorm') and \
-               (key == 'num_batches_tracked'):
-                state_dict.pop('.'.join(keys))
+                    state_dict.pop(".".join(keys))
+            if module.__class__.__name__.startswith("InstanceNorm") and \
+               (key == "num_batches_tracked"):
+                state_dict.pop(".".join(keys))
         else:
             self.__patch_instance_norm_state_dict(state_dict, getattr(module, key), keys, i + 1)
 
@@ -117,39 +118,38 @@ class BaseModel:
         """Load all the networks from the disk.
 
         Parameters:
-            epoch (int) -- current epoch; used in the file name '%s_net_%s.pth' % (epoch, name)
+            epoch (int) -- current epoch; used in the file name "%s_net_%s.pth" % (epoch, name)
         """
         ckpt = torch.loat(save_path)
         for name in self.model_names:
             if isinstance(name, str):
-                net = getattr(self, 'net' + name)
+                net = getattr(self, "net" + name)
                 if isinstance(net, torch.nn.DataParallel):
                     net = net.module
                 # if you are using PyTorch newer than 0.4 (e.g., built from
                 # GitHub source), you can remove str() on self.device
                 state_dict = ckpt[name]
-                if hasattr(state_dict, '_metadata'):
+                if hasattr(state_dict, "_metadata"):
                     del state_dict._metadata
 
                 # patch InstanceNorm checkpoints prior to 0.4
                 for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
-                    self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))
+                    self.__patch_instance_norm_state_dict(state_dict, net, key.split("."))
                 net.load_state_dict(state_dict)
 
     def save_networks(self, save_path):
         """Save all the networks to the disk.
 
         Parameters:
-            epoch (int) -- current epoch; used in the file name '%s_net_%s.pth' % (epoch, name)
+            epoch (int) -- current epoch; used in the file name "%s_net_%s.pth" % (epoch, name)
         """
         param_dict = dict()
         for name in self.model_names:
             if isinstance(name, str):
                 net = getattr(self, "net" + name)
 
-                if len(self.gpu_ids) > 0 and torch.cuda.is_available():
-                    param_dict[name] = net.module.cpu().state_dict()
-                    net.cuda(self.gpu_ids[0])
+                if self.dist:
+                    param_dict[name] = net.module.state_dict()
                 else:
                     param_dict[name] = net.cpu().state_dict()
         torch.save(param_dict, save_path)
@@ -160,35 +160,37 @@ class BaseModel:
         Parameters:
             verbose (bool) -- if verbose: print the network architecture
         """
-        print('---------- Networks initialized -------------')
+        print("---------- Networks initialized -------------")
         for name in self.model_names:
             if isinstance(name, str):
-                net = getattr(self, 'net' + name)
+                net = getattr(self, "net" + name)
                 num_params = 0
                 for param in net.parameters():
                     num_params += param.numel()
                 if verbose:
                     print(net)
-                print('[Network %s] Total number of parameters : %.3f M' % (name, num_params / 1e6))
-        print('-----------------------------------------------')
+                print("[Network %s] Total number of parameters : %.3f M" % (name, num_params / 1e6))
+        print("-----------------------------------------------")
 
     def update_learning_rate(self):
         """Update learning rates for all the networks; called at the end of every epoch"""
         for i, (name, scheduler) in enumerate(zip(self.model_names, self.schedulers)):
             if name == "Prosody_estimator": continue
-            old_lr = self.optimizers[i].param_groups[0]['lr']
-            if self.train_config["GAN"]["lr_policy"] == 'plateau':
+            old_lr = self.optimizers[i].param_groups[0]["lr"]
+            if self.train_config["GAN"]["lr_policy"] == "plateau":
                 scheduler.step(self.metric)
             else:
                 scheduler.step()
-            lr = self.optimizers[i].param_groups[0]['lr']
-            print(f'{name}: learning rate {old_lr:.7f} -> {lr:.7f}')
+            lr = self.optimizers[i].param_groups[0]["lr"]
+
+            # if self.local_rank == 0:
+            #     print(f"{name}: learning rate {old_lr:.7f} -> {lr:.7f}")
 
     def get_learning_rate(self):
         lr_dict = dict()
         for i, name in enumerate(self.model_names):
             if name == "Prosody_estimator": continue
-            lr = self.optimizers[i].param_groups[0]['lr']
+            lr = self.optimizers[i].param_groups[0]["lr"]
             lr_dict[name] = lr
         return lr_dict
 
@@ -210,10 +212,10 @@ class SemiCycleGANModel(BaseModel):
     """
     This class implements the CycleGAN model, for learning image-to-image translation without paired data.
 
-    The model training requires '--dataset_mode unaligned' dataset.
-    By default, it uses a '--netG resnet_9blocks' ResNet generator,
-    a '--netD basic' discriminator (PatchGAN introduced by pix2pix),
-    and a least-square GANs objective ('--gan_mode lsgan').
+    The model training requires "--dataset_mode unaligned" dataset.
+    By default, it uses a "--netG resnet_9blocks" ResNet generator,
+    a "--netD basic" discriminator (PatchGAN introduced by pix2pix),
+    and a least-square GANs objective ("--gan_mode lsgan").
 
     CycleGAN paper: https://arxiv.org/pdf/1703.10593.pdf
     """
@@ -239,12 +241,12 @@ class SemiCycleGANModel(BaseModel):
         """
         parser.set_defaults(no_dropout=True)  # default CycleGAN did not use dropout
         if is_train:
-            parser.add_argument('--lambda_sign', type=float, default=10.0, help='weight for cycle loss (A -> B -> A)')
-            parser.add_argument('--lambda_audio', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
+            parser.add_argument("--lambda_sign", type=float, default=10.0, help="weight for cycle loss (A -> B -> A)")
+            parser.add_argument("--lambda_audio", type=float, default=10.0, help="weight for cycle loss (B -> A -> B)")
 
         return parser
 
-    def __init__(self, args, preprocess_config, model_config, train_config, configs_ft=None, isTrain=True):
+    def __init__(self, args, preprocess_config, model_config, train_config, configs_ft=None, isTrain=True, distributed=False):
         """Initialize the CycleGAN class.
 
         Parameters:
@@ -259,14 +261,16 @@ class SemiCycleGANModel(BaseModel):
         # self.netG_sign2audio = Sign2Speech(preprocess_config, model_config)
         self.netG_sign2audio = Sign2Speech(preprocess_config, model_config)
         self.model_names.append("G_sign2audio")
-        self.netG_sign2audio = networks.init_net(self.netG_sign2audio, gpu_ids=self.gpu_ids)
+        self.target_speaker = model_config["speaker"]["female"]
+        self.netG_sign2audio = networks.init_net(self.netG_sign2audio, args, distributed=distributed, gpu_ids=self.gpu_ids)
         if configs_ft is not None:
             train_config_ft = configs_ft[2]
             ckpt_path = os.path.join(
                 train_config_ft["path"]["ckpt_path"],
                 "{}.pth.tar".format(args.restore_step_ft),
             )
-            print(f"Load {ckpt_path}")
+            if args.local_rank == 0:
+                print(f"Load {ckpt_path}")
             ckpt = torch.load(ckpt_path)
             self.netG_sign2audio.module.load_state_dict(ckpt["model"], strict=False)
 
@@ -278,7 +282,8 @@ class SemiCycleGANModel(BaseModel):
             self.netD_audio = networks.define_D(
                 model_config["D_audio"]["input_nc"], model_config["D_audio"]["ndf"], "audio",
                 model_config["D_audio"]["n_layers_D"], model_config["D_audio"]["norm"],
-                model_config["D_audio"]["init_type"], model_config["D_audio"]["init_gain"], train_config["gpu_ids"])
+                model_config["D_audio"]["init_type"], model_config["D_audio"]["init_gain"],
+                args, distributed, train_config["gpu_ids"])
             self.model_names.append("D_audio")
             self.loss_log_D = {}
             self.weight_prosody = train_config["loss"]["weight"]["prosody"]
@@ -286,7 +291,7 @@ class SemiCycleGANModel(BaseModel):
             self.netProsody_estimator = ProsodyDistEstimator1D(
                 3, train_config["loss"]["prosody"]["bins"], 4
             )
-            self.netProsody_estimator = networks.init_net(self.netProsody_estimator, gpu_ids=self.gpu_ids)
+            self.netProsody_estimator = networks.init_net(self.netProsody_estimator, args, distributed=distributed, gpu_ids=self.gpu_ids)
             self.model_names.append("Prosody_estimator")
 
             self.mean = train_config["discriminator"]["noise"]["mean"]
@@ -294,7 +299,7 @@ class SemiCycleGANModel(BaseModel):
             self.fake_audio_pool = AudioPool(train_config["GAN"]["pool_size"])  # create image buffer to store previously generated images
             # define loss functions
             self.criterionGAN = networks.GANLoss(train_config["GAN"]["gan_mode"]).to(self.device, non_blocking=True)  # define GAN loss.
-            # self.criterionProsody = nn.MSELoss(reduction='none').to(self.device, non_blocking=True)
+            # self.criterionProsody = nn.MSELoss(reduction="none").to(self.device, non_blocking=True)
             self.criterionProsody = nn.CrossEntropyLoss().to(self.device, non_blocking=True)
             # train_parameters = list(self.netG_sign2audio.parameters())
             train_parameters = []
@@ -331,7 +336,7 @@ class SemiCycleGANModel(BaseModel):
         max_src_len = token_length.max()
         text_tokens = self.real_sign.text_tokens[:, :max_src_len].to(self.device, non_blocking=True)
 
-        speakers = torch.randint(self.speaker_num, (batch_size,), device=self.device).long()
+        speakers = torch.full((batch_size,), self.target_speaker, device=self.device).long()
 
         # without sign language TTS
         with torch.no_grad():
@@ -463,16 +468,16 @@ class SemiCycleGANModel(BaseModel):
         self.forward()      # compute fake images and reconstruction images.
         # G_A and G_B
         self.set_requires_grad([self.netD_audio], False)  # Ds require no gradients when optimizing Gs
-        self.optimizer_G.zero_grad(set_to_none=True)  # set G's gradients to zero
+        self.optimizer_G.zero_grad(set_to_none=True)  # set G"s gradients to zero
         loss_log_G = self.backward_G()             # calculate gradients for G
         loss_log.update(loss_log_G)
-        self.optimizer_G.step()       # update G's weights
+        self.optimizer_G.step()       # update G"s weights
         if self.step == 0:
             # D_A and D_B
             self.set_requires_grad([self.netD_audio], True)
-            self.optimizer_D.zero_grad(set_to_none=True)   # set D's gradients to zero
+            self.optimizer_D.zero_grad(set_to_none=True)   # set D"s gradients to zero
             self.loss_log_D = self.backward_D_audio()      # calculate gradients for D_audio
-            self.optimizer_D.step()  # update D_A and D_B's weights
+            self.optimizer_D.step()  # update D_A and D_B"s weights
         self.step = (self.step + 1) % 2
         loss_log.update(self.loss_log_D)
         torch.cuda.empty_cache()

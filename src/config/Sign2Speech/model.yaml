@@ -49,6 +49,9 @@ D_audio:
 
 
 multi_speaker: True
+speaker:
+  male: 43
+  female: 3
 
 max_seq_len: 5000
 

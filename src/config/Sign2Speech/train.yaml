@@ -6,7 +6,7 @@ path:
 fine-tuning: "./FastSpeech2/config/VCTK"
 
 optimizer:
-  batch_size: 16 # 16
+  batch_size: 8 # 16
   lr_G_s2a: 0.001
   lr_D_a: 0.01
   lr_fine-tuning: 0.001
@@ -24,7 +24,7 @@ loss:
     dist: True
     bins: 32
   weight:
-    prosody: 0.3
+    prosody: 0.1
 
 discriminator:
   noise:
