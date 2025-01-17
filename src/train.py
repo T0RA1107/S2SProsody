@@ -265,9 +265,6 @@ def main(args, configs, configs_ft):
         model.update_learning_rate()    # update learning rates in the beginning of every epoch.
         if distributed:
             sampler.set_epoch(epoch)
-        if args.local_rank == 0 and not args.without_save_wav:
-            save_inference(model, vocoder, valid_loader, sampling_rate, stats, run_dir, epoch)
-        exit()
         for batchs in loader:  # inner loop within one epoch
             for batch in batchs:
 
