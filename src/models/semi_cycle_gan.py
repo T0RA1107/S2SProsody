@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
 import os
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 import itertools
 import numpy as np
+import json
+import random
 
 from util.audio_pool import AudioPool
 from . import networks
@@ -11,6 +13,9 @@ from .sign2audio import Sign2Speech
 from .prosody_estimator import ProsodyEstimator1D, ProsodyEstimator2D, ProsodyDistEstimator1D
 
 from FastSpeech2.model.loss import FastSpeech2Loss
+
+
+InferenceOutput = namedtuple("InferenceOutput", "mels lens p_predictions e_predictions")
 
 
 def make_mask_from_lens(length, max_length=None):
@@ -152,6 +157,7 @@ class BaseModel:
                     param_dict[name] = net.module.state_dict()
                 else:
                     param_dict[name] = net.cpu().state_dict()
+                    net.to(self.device)
         torch.save(param_dict, save_path)
 
     def print_networks(self, verbose):
@@ -246,7 +252,7 @@ class SemiCycleGANModel(BaseModel):
 
         return parser
 
-    def __init__(self, args, preprocess_config, model_config, train_config, configs_ft=None, isTrain=True, distributed=False):
+    def __init__(self, args, preprocess_config, model_config, train_config, speaker_info=None, configs_ft=None, isTrain=True, distributed=False):
         """Initialize the CycleGAN class.
 
         Parameters:
@@ -254,6 +260,8 @@ class SemiCycleGANModel(BaseModel):
         """
         BaseModel.__init__(self, args, preprocess_config, model_config, train_config, isTrain)
         self.prosody_dist = train_config["loss"]["prosody"]["dist"]
+        if speaker_info is not None:
+            self.speaker_info = speaker_info
 
         # define networks (both Generators and discriminators)
         # The naming is different from those used in the paper.
@@ -261,7 +269,7 @@ class SemiCycleGANModel(BaseModel):
         # self.netG_sign2audio = Sign2Speech(preprocess_config, model_config)
         self.netG_sign2audio = Sign2Speech(preprocess_config, model_config)
         self.model_names.append("G_sign2audio")
-        self.target_speaker = model_config["speaker"]["female"]
+
         self.netG_sign2audio = networks.init_net(self.netG_sign2audio, args, distributed=distributed, gpu_ids=self.gpu_ids)
         if configs_ft is not None:
             train_config_ft = configs_ft[2]
@@ -277,6 +285,15 @@ class SemiCycleGANModel(BaseModel):
             else:
                 self.netG_sign2audio.load_state_dict(ckpt["model"], strict=False)
 
+        # speaker info
+        with open(os.path.join(preprocess_config["path"]["preprocessed_path"], "speakers.json")) as f:
+            self.speaker_map = json.load(f)
+        self.target_speaker = model_config["speaker"]["target"]
+        self.all_speakers = []
+        with open(model_config["speaker"]["all"], "r") as f:
+            for pid in f.readlines():
+                self.all_speakers.append(self.speaker_map[pid.rstrip()])
+
         self.audio2sign = None
 
         self.step = 0
@@ -290,6 +307,8 @@ class SemiCycleGANModel(BaseModel):
             self.model_names.append("D_audio")
             self.loss_log_D = {}
             self.weight_prosody = train_config["loss"]["weight"]["prosody"]
+            self.weight_regdist_mean = train_config["loss"]["weight"]["regdist_mean"]
+            self.weight_regdist_var  = train_config["loss"]["weight"]["regdist_var"]
 
             self.netProsody_estimator = ProsodyDistEstimator1D(
                 3, train_config["loss"]["prosody"]["bins"], 4
@@ -304,6 +323,7 @@ class SemiCycleGANModel(BaseModel):
             self.criterionGAN = networks.GANLoss(train_config["GAN"]["gan_mode"]).to(self.device, non_blocking=True)  # define GAN loss.
             # self.criterionProsody = nn.MSELoss(reduction="none").to(self.device, non_blocking=True)
             self.criterionProsody = nn.CrossEntropyLoss().to(self.device, non_blocking=True)
+            self.criterionRegdist = nn.L1Loss().to(self.device, non_blocking=True)
             # train_parameters = list(self.netG_sign2audio.parameters())
             train_parameters = []
             train_layers = ["sign_processer", "s2s_mixier", "visual_project"]
@@ -341,7 +361,11 @@ class SemiCycleGANModel(BaseModel):
         max_src_len = token_length.max().to(self.device, non_blocking=True)
         text_tokens = self.real_sign.text_tokens[:, :max_src_len].to(self.device, non_blocking=True)
 
-        speakers = torch.full((batch_size,), self.target_speaker, device=self.device).long()
+        speakers = random.choices(self.all_speakers, k=batch_size)
+        if self.speaker_info is not None:
+            energy_info = torch.tensor([self.speaker_info["energy"][i] for i in speakers], device=self.device).float()
+            pitch_info  = torch.tensor([self.speaker_info["pitch"][i] for i in speakers], device=self.device).float()
+        speakers = torch.tensor(speakers, device=self.device).long()
 
         # without sign language TTS
         with torch.no_grad():
@@ -380,6 +404,18 @@ class SemiCycleGANModel(BaseModel):
 
         self.fake_audio_with_sign_lens = pred.mel_lens
         self.speakers = speakers.detach().cpu()
+
+        if self.speaker_info is not None:
+            norm_energy = (pred.e_predictions - energy_info[:, [0]]) / (energy_info[:, [1]] - energy_info[:, [0]] + 1e-5)
+            norm_energy = norm_energy.masked_fill(pred.src_masks, 0.0)
+            self.energy_mean = norm_energy.sum(dim=1) / token_length
+            self.energy_var = (norm_energy ** 2).sum(dim=1) / token_length - self.energy_mean ** 2
+
+            norm_pitch = (pred.p_predictions - pitch_info[:, [0]]) / (pitch_info[:, [1]] - pitch_info[:, [0]] + 1e-5)
+            norm_pitch = norm_pitch.masked_fill(pred.src_masks, 0.0)
+            self.pitch_mean = norm_pitch.sum(dim=1) / token_length
+            self.pitch_var = (norm_pitch ** 2).sum(dim=1) / token_length - self.pitch_mean ** 2
+
         prosody_predictions = torch.cat([
             pred.p_predictions.unsqueeze(1),
             pred.e_predictions.unsqueeze(1),
@@ -429,7 +465,7 @@ class SemiCycleGANModel(BaseModel):
 
         real_audio = self.real_audio.mels.float().to(self.device, non_blocking=True)
         real_audio_lens = self.real_audio.mel_lens
-        input_len = min(min(fake_audio_lens), min(real_audio_lens))
+        input_len = 100  # constant length for now
         loss_D = self.backward_D_basic(
             self.netD_audio,
             real_audio[:, :input_len].unsqueeze(1),
@@ -456,6 +492,20 @@ class SemiCycleGANModel(BaseModel):
         loss_prosody = sum(loss_prosody) / 4.
         loss_log["prosody loss/total"] = loss_prosody.detach().cpu()
 
+        # regularization for prosody distribution
+        bs, _, bins = self.prosody_label.shape
+        x = torch.arange(0, bins) / bins + 1 / (2 * bins)
+        x = x.unsqueeze(0).repeat(bs, 1).to(self.device, non_blocking=True)
+        velocity_hand_mean = (self.prosody_label[:, 0] * x).sum(dim=1)
+        velocity_hand_var = (self.prosody_label[:, 0] * (x - velocity_hand_mean.unsqueeze(1)) ** 2).sum(dim=1)
+        velocity_face_mean = (self.prosody_label[:, 0] * x).sum(dim=1)
+        velocity_face_var = (self.prosody_label[:, 0] * (x - velocity_face_mean.unsqueeze(1)) ** 2).sum(dim=1)
+        if self.speaker_info is not None:
+            loss_reg_energy_mean = self.criterionRegdist(self.energy_mean, velocity_hand_mean)
+            loss_reg_pitch_mean = self.criterionRegdist(self.pitch_mean, velocity_face_mean)
+            loss_log["Regularization/Energy mean"] = loss_reg_energy_mean
+            loss_log["Regularization/Pitch mean"] = loss_reg_pitch_mean
+
         with torch.no_grad():
             loss_prosody_wo_sign = [self.criterionProsody(self.pred_prosody_label_wo_sign[i], self.prosody_label[:, i]) for i in range(len(self.pred_prosody_label_wo_sign))]
             loss_log["prosody loss without sign/v_loss"] = sum(loss_prosody_wo_sign[:2]).detach().cpu() / 2.
@@ -464,11 +514,55 @@ class SemiCycleGANModel(BaseModel):
         # combined loss and calculate gradients
         loss_G = loss_G_audio
         loss_G += loss_prosody * self.weight_prosody
+        if self.speaker_info is not None:
+            loss_G += loss_reg_pitch_mean * self.weight_regdist_mean
+            # loss_G += loss_reg_pitch_var * self.weight_regdist_var
 
         loss_G.backward()
 
+        del self.energy_mean, self.pitch_mean, self.energy_var, self.pitch_var
         torch.cuda.empty_cache()
         return loss_log
+
+    def inference(self, sign):
+        batch_size = sign.text_tokens.shape[0]
+        token_length = sign.token_length.to(self.device, non_blocking=True)
+        max_src_len = token_length.max().to(self.device, non_blocking=True)
+        text_tokens = sign.text_tokens[:, :max_src_len].to(self.device, non_blocking=True)
+
+        speakers = torch.full((batch_size,), self.target_speaker, device=self.device).long()
+
+        # without sign language TTS
+        with torch.no_grad():
+            pred = self.netG_sign2audio(
+                speakers,
+                text_tokens,
+                token_length,
+                max_src_len,
+            )
+
+            audio_wo_sign = pred.postnet_output.masked_fill(
+                pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
+
+            audio_wo_sign_lens = pred.mel_lens.detach().cpu()
+            output_wo_sign = InferenceOutput(audio_wo_sign, audio_wo_sign_lens, pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy())
+
+            # with sign language TTS
+            pred = self.netG_sign2audio(
+                speakers,
+                text_tokens,
+                token_length,
+                max_src_len,
+                key_point=sign.visual_prefix.to(self.device, non_blocking=True)
+            )
+
+            audio_w_sign = pred.postnet_output.masked_fill(
+                pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
+            audio_w_sign_lens = pred.mel_lens
+            output_w_sign = InferenceOutput(audio_w_sign, audio_w_sign_lens, pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy())
+
+        torch.cuda.empty_cache()
+        return output_wo_sign, output_w_sign
 
     def optimize_parameters(self):
         """Calculate losses, gradients, and update network weights; called in every training iteration"""

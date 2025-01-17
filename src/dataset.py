@@ -80,10 +80,14 @@ class AudioDataset(Dataset):
             self.speaker_map = json.load(f)
             self.speaker_num = len(self.speaker_map)
 
-        self.target_speaker = model_config["speaker"]["female"]
+        self.target_speaker = model_config["speaker"]["target"]
+        self.all_speakers = set()
+        with open(model_config["speaker"]["all"], "r") as f:
+            for pid in f.readlines():
+                self.all_speakers.add(pid.rstrip())
         basename_, speaker_, text_, raw_text_ = [], [], [], []
         for i in range(len(self.text)):
-            if self.speaker_map[self.speaker[i]] != self.target_speaker:
+            if self.speaker[i] not in self.all_speakers:
                 continue
             basename_.append(self.basename[i])
             speaker_.append(self.speaker[i])
@@ -99,6 +103,45 @@ class AudioDataset(Dataset):
 
     def __len__(self):
         return len(self.text)
+
+    def get_speaker_info(self):
+        info_pitch =    { self.speaker_map[s]: [float("inf"), -float("inf")] for s in self.all_speakers}
+        info_energy =   { self.speaker_map[s]: [float("inf"), -float("inf")] for s in self.all_speakers}
+        info_duration = { self.speaker_map[s]: [float("inf"), -float("inf")] for s in self.all_speakers}
+        for idx in range(self.__len__()):
+            basename = self.basename[idx]
+            speaker = self.speaker[idx]
+            speaker_id = self.speaker_map[speaker]
+            pitch_path = os.path.join(
+                self.preprocessed_path,
+                "pitch",
+                "{}-pitch-{}.npy".format(speaker, basename),
+            )
+            pitch = np.load(pitch_path)
+            energy_path = os.path.join(
+                self.preprocessed_path,
+                "energy",
+                "{}-energy-{}.npy".format(speaker, basename),
+            )
+            energy = np.load(energy_path)
+            duration_path = os.path.join(
+                self.preprocessed_path,
+                "duration",
+                "{}-duration-{}.npy".format(speaker, basename),
+            )
+            duration = np.load(duration_path)
+
+            info_pitch[speaker_id][0] = min(info_pitch[speaker_id][0], pitch.min())
+            info_pitch[speaker_id][1] = max(info_pitch[speaker_id][1], pitch.max())
+            info_energy[speaker_id][0] = min(info_energy[speaker_id][0], energy.min())
+            info_energy[speaker_id][1] = max(info_energy[speaker_id][1], energy.max())
+            info_duration[speaker_id][0] = min(info_duration[speaker_id][0], duration.min())
+            info_duration[speaker_id][1] = max(info_duration[speaker_id][1], duration.max())
+
+        return {
+            "pitch": info_pitch,
+            "energy": info_energy,
+            "duration": info_duration }
 
     def __getitem__(self, idx):
         basename = self.basename[idx]
@@ -260,7 +303,7 @@ class SignDataset(Dataset):
         def filter_missing_or_short(row):
             full_path = os.path.join(self.feat_path, f"{row['vid']}.pkl")
             ok = os.path.exists(full_path) and os.path.getsize(full_path) > 0
-            if ok:
+            if ok and partial_list_path is None:
                 with open(full_path, "rb") as file:
                     pose_keypoints = pickle.load(file)
                     ok = ok and (pose_keypoints.shape[0] >= 30)
@@ -268,6 +311,9 @@ class SignDataset(Dataset):
 
         is_missing_or_short = data_frame.apply(filter_missing_or_short, axis=1)
         df_filtered = data_frame[is_missing_or_short]
+        if partial_list_path is None:
+            base_name = os.path.basename(self.label_path)
+            df_filtered.to_csv(self.label_path.replace(base_name, "filtered.tsv"), sep="\t")
         # for vid in df_filtered["vid"]:
         #     full_path = os.path.join(self.feat_path, f"{vid}.pkl")
         #     with open(full_path, "rb") as file:
@@ -316,22 +362,23 @@ class SignDataset(Dataset):
                 f.writelines(trans_ids_txt_list)
 
         ### Filtering too long translation_token_ids
-        trans_id_arg = np.argsort(token_id_lens)
-        token_id_lens = np.array(token_id_lens)[trans_id_arg]
-        too_long_idx = -1
-        while token_id_lens[too_long_idx] > 250:
-            too_long_idx -= 1
-        self.translation_token_ids = [
-            self.translation_token_ids[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
-        self.translation = [
-            self.translation[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
-        self.video_names = [
-            self.video_names[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
-        self.yids = [
-            self.yids[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
-        self.vid2idx = {
-            vid: i for i, vid in enumerate(self.video_names)
-        }
+        if partial_list_path is None:
+            trans_id_arg = np.argsort(token_id_lens)
+            token_id_lens = np.array(token_id_lens)[trans_id_arg]
+            too_long_idx = -1
+            while token_id_lens[too_long_idx] > 250:
+                too_long_idx -= 1
+            self.translation_token_ids = [
+                self.translation_token_ids[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
+            self.translation = [
+                self.translation[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
+            self.video_names = [
+                self.video_names[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
+            self.yids = [
+                self.yids[trans_id_arg[i]] for i in range(len(trans_id_arg))][:too_long_idx]
+            self.vid2idx = {
+                vid: i for i, vid in enumerate(self.video_names)
+            }
 
         # for video-wise normalization
         yid2idxs = { yid: [] for yid in self.yids }
@@ -356,8 +403,11 @@ class SignDataset(Dataset):
             self.video_names), f"Text ids count:{len(self.translation_token_ids)}\tVid count:{len(self.video_names)}"
         all_len = np.array([len(tk)
                                for tk in self.translation_token_ids])
-        self.max_seq_len = min(
-            int(all_len.mean() + all_len.std() * 10), int(all_len.max()))
+        if partial_list_path is None:
+            self.max_seq_len = min(
+                int(all_len.mean() + all_len.std() * 10), int(all_len.max()))
+        else:
+            self.max_seq_len = int(all_len.max())
         if self.local_rank == 0:
             print(f"Max sequence length:{self.max_seq_len}")
 
@@ -621,14 +671,14 @@ class UnpairedAudioSignDataset(Dataset):
         self.serial_batches = train_config["dataset"]["serial_batches"]
 
     def __len__(self):
-        return max(len(self.audio_dataset), len(self.sign_dataset))
+        return len(self.sign_dataset)
 
     def __getitem__(self, index):
-        idx_audio = index % self.audio_size
+        idx_sign = index % self.sign_size
         if self.serial_batches:
-            idx_sign = index % self.sign_dataset
+            idx_audio = index % self.audio_dataset
         else:
-            idx_sign = random.randint(0, self.sign_size - 1)
+            idx_audio = random.randint(0, self.audio_size - 1)
         return {
             "audio": self.audio_dataset.__getitem__(idx_audio),
             "sign": self.sign_dataset.__getitem__(idx_sign)

@@ -2,16 +2,16 @@ import argparse
 import os
 import datetime
 import random
+import yaml
+import json
 
-from PIL import Image
-import matplotlib.pyplot as plt
-from io import BytesIO
+import numpy as np
+import pandas as pd
 import soundfile as sf
+import matplotlib.pyplot as plt
 import torch
 import torch.utils
-import yaml
-import numpy as np
-import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import wandb
 from tqdm import tqdm
@@ -20,11 +20,10 @@ from FastSpeech2.evaluate import evaluate
 from FastSpeech2.utils.model import get_vocoder, vocoder_infer
 
 from models.semi_cycle_gan import SemiCycleGANModel
-from dataset import UnpairedAudioSignDataset
+from dataset import UnpairedAudioSignDataset, SignDataset
 
 # DDP
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -41,6 +40,122 @@ def init_random_seeds(random_seed=0, rank=0):
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = False
 
+
+def expand(values, durations):
+    out = list()
+    for value, d in zip(values, durations):
+        out += [value] * max(0, int(d))
+    return np.array(out)
+
+
+def plot_mel(data, stats, name):
+    fig, ax = plt.subplots()
+    pitch_min, pitch_max, pitch_mean, pitch_std, energy_min, energy_max = stats
+    pitch_min = pitch_min * pitch_std + pitch_mean
+    pitch_max = pitch_max * pitch_std + pitch_mean
+
+    def add_axis(fig, old_ax):
+        ax = fig.add_axes(old_ax.get_position(), anchor="W")
+        ax.set_facecolor("None")
+        return ax
+
+    mel, pitch, energy = data
+    pitch = pitch * pitch_std + pitch_mean
+    ax.imshow(mel, origin="lower")
+    ax.set_aspect(2.5, adjustable="box")
+    ax.set_ylim(0, mel.shape[0])
+    ax.tick_params(labelsize="x-small", left=False, labelleft=False)
+    ax.set_anchor("W")
+
+    ax1 = add_axis(fig, ax)
+    ax1.plot(pitch, color="tomato")
+    ax1.set_xlim(0, mel.shape[1])
+    ax1.set_ylim(0, pitch_max)
+    ax1.set_ylabel("F0", color="tomato")
+    ax1.tick_params(
+        labelsize="x-small", colors="tomato", bottom=False, labelbottom=False
+    )
+
+    ax2 = add_axis(fig, ax)
+    ax2.plot(energy, color="darkviolet")
+    ax2.set_xlim(0, mel.shape[1])
+    ax2.set_ylim(energy_min, energy_max)
+    ax2.set_ylabel("Energy", color="darkviolet")
+    ax2.yaxis.set_label_position("right")
+    ax2.tick_params(
+        labelsize="x-small",
+        colors="darkviolet",
+        bottom=False,
+        labelbottom=False,
+        left=False,
+        labelleft=False,
+        right=True,
+        labelright=True,
+    )
+    fig.savefig(name)
+    plt.close()
+
+
+def save_inference(model: SemiCycleGANModel, vocoder, data_loader, sampling_rate, stats, output_dir, epoch):
+    save_wav_dir = os.path.join(output_dir, "wavs", str(epoch))
+    save_mel_dir = os.path.join(output_dir, "mels", str(epoch))
+    save_metadata_dir = os.path.join(output_dir, "metadata")
+    os.makedirs(save_wav_dir, exist_ok=True)
+    os.makedirs(save_mel_dir, exist_ok=True)
+    os.makedirs(save_metadata_dir, exist_ok=True)
+    name_list = []
+    text_list = []
+    l2_list = []
+    for batchs in data_loader:
+        for batch in batchs:
+            output_wo_sign, output_w_sign = model.inference(batch)
+            bs = output_wo_sign.mels.shape[0]
+            for i in range(bs):
+                # without sign
+                mel_len_wo_sign = output_wo_sign.lens[i]
+                mel_prediction_wo_sign = output_wo_sign.mels[i, :, :mel_len_wo_sign].detach().transpose(1, 2)
+                wav_prediction = vocoder_infer(
+                    mel_prediction_wo_sign,
+                    vocoder,
+                    model_config,
+                    preprocess_config,
+                )[0]
+                sf.write(os.path.join(save_wav_dir, f"wo|{batch.raw_texts[i]}.wav"), wav_prediction, samplerate=sampling_rate)
+                duration = output_wo_sign.d_rounded[i]
+                plot_mel((
+                    mel_prediction_wo_sign.squeeze(0).cpu().numpy(),
+                    expand(output_wo_sign.p_predictions[i], duration),
+                    expand(output_wo_sign.e_predictions[i], duration)),
+                    stats, os.path.join(save_mel_dir, f"wo|{batch.raw_texts[i]}.png"))
+                # with sign
+                mel_len_w_sign = output_w_sign.lens[i]
+                mel_prediction_w_sign = output_w_sign.mels[i, :, :mel_len_w_sign].detach().transpose(1, 2)
+                wav_prediction = vocoder_infer(
+                    mel_prediction_w_sign,
+                    vocoder,
+                    model_config,
+                    preprocess_config,
+                )[0]
+                sf.write(os.path.join(save_wav_dir, f"w|{batch.raw_texts[i]}.wav"), wav_prediction, samplerate=sampling_rate)
+                duration = output_w_sign.d_rounded[i]
+                plot_mel((
+                    mel_prediction_w_sign.squeeze(0).cpu().numpy(),
+                    expand(output_w_sign.p_predictions[i], duration),
+                    expand(output_w_sign.e_predictions[i], duration)),
+                    stats, os.path.join(save_mel_dir, f"w|{batch.raw_texts[i]}.png"))
+                # add metadata
+                name_list.append(batch.video_names[i])
+                text_list.append(batch.raw_texts[i])
+                max_len = max(mel_len_wo_sign, mel_len_w_sign)
+                l2 = F.mse_loss(
+                    F.pad(mel_prediction_wo_sign, (0, max_len - mel_len_wo_sign)),
+                    F.pad(mel_prediction_w_sign,  (0, max_len - mel_len_w_sign))).detach().cpu().numpy()
+                l2_list.append(l2)
+
+            torch.cuda.empty_cache()
+    arg_idx = np.argsort(l2_list)[::-1]
+    metadata = pd.DataFrame({ "name": name_list, "text": text_list, "L2": l2_list, "index": arg_idx })
+    metadata.to_csv(os.path.join(save_metadata_dir, f"{epoch}.tsv"), sep="\t")
 
 def main(args, configs, configs_ft):
     preprocess_config, model_config, train_config = configs
@@ -62,6 +177,17 @@ def main(args, configs, configs_ft):
 
     dataset = UnpairedAudioSignDataset(
         "train.txt", preprocess_config, train_config, model_config, args)  # create a dataset given opt.dataset_mode and other options
+    valid_dataset = SignDataset(
+        args, preprocess_config, train_config, partial_list_path="./valid_list.txt"
+    )
+    speaker_info = dataset.audio_dataset.get_speaker_info()
+    with open(
+        os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
+    ) as f:
+        stats = json.load(f)
+        stats = stats["pitch"] + stats["energy"][:2]
+
+
     if distributed:
         sampler = torch.utils.data.distributed.DistributedSampler(
             dataset, num_replicas=args.ngpus, rank=args.local_rank)
@@ -69,7 +195,6 @@ def main(args, configs, configs_ft):
         sampler = None
     if "speaker_num" not in model_config:
         model_config["speaker_num"] = dataset.speaker_num
-    dataset_size = len(dataset)    # get the number of images in the dataset.
     batch_size = train_config["optimizer"]["batch_size"]
     group_size = 4
     loader = DataLoader(
@@ -81,24 +206,28 @@ def main(args, configs, configs_ft):
         num_workers=8,
         pin_memory=True
     )
-    if args.local_rank == 0:
-        print("Batch size:", batch_size)
-        print("The number of training images = %d" % dataset_size)
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=batch_size * group_size,
+        shuffle=False,
+        collate_fn=valid_dataset.collate_fn,
+        num_workers=8,
+        pin_memory=True
+    )
 
-    model = SemiCycleGANModel(args, preprocess_config, model_config, train_config, configs_ft, distributed=distributed)      # create a model given opt.model and other options
+    model = SemiCycleGANModel(args, preprocess_config, model_config, train_config, speaker_info=speaker_info, configs_ft=configs_ft, distributed=distributed)      # create a model given opt.model and other options
     model.setup(train_config)               # regular setup: load and print networks; create schedulers
-    total_iters = 0                # the total number of training iterations
 
     vocoder = get_vocoder(model_config, device)
 
     dt_now = datetime.datetime.now()
     run_name = dt_now.strftime("%m:%d:%H:%M")
     run_dir = f"./output/{run_name}/"
-    if args.local_rank == 0 and not args.without_save_wav:
-        os.makedirs(run_dir, exist_ok=True)
-        os.makedirs(run_dir + "wav_wo_sign/", exist_ok=True)
-        os.makedirs(run_dir + "wav_w_sign/", exist_ok=True)
-        pred_txt_file = run_dir + "pred.txt"
+    if not args.without_save_wav:
+        wav_dir = run_dir + "wavs/"
+        if args.local_rank == 0:
+            os.makedirs(run_dir, exist_ok=True)
+            os.makedirs(wav_dir, exist_ok=True)
     if args.local_rank == 0 and args.save_ckpt:
         os.makedirs(run_dir, exist_ok=True)
         os.makedirs(run_dir + "ckpt", exist_ok=True)
@@ -106,7 +235,7 @@ def main(args, configs, configs_ft):
     if args.local_rank == 0 and args.use_wandb:
         wandb.init(
             project="Sign2Speech",
-            group="S2S GAN",
+            group="Reg on Prosody Dist",
             job_type="training",
             name=run_name,
             config={
@@ -116,6 +245,7 @@ def main(args, configs, configs_ft):
             },
         )
 
+    total_iters = 0
     grad_clip_thresh = train_config["optimizer"]["grad_clip_thresh"]
     total_step = train_config["step"]["total_step"]
     n_epochs_decay = train_config["step"]["n_epochs_decay"]
@@ -130,83 +260,39 @@ def main(args, configs, configs_ft):
 
     if args.local_rank == 0:
         progress = tqdm(total=len(range(step_count, total_step + n_epochs_decay)), desc="Training")
+        nxt_log_step = log_step
     for epoch in range(step_count, total_step + n_epochs_decay):    # outer loop for different epochs.
         model.update_learning_rate()    # update learning rates in the beginning of every epoch.
-        if args.local_rank == 0:
-            progress_inner = tqdm(total=len(loader), leave=True, desc=f"EPOCH {epoch}")
         if distributed:
             sampler.set_epoch(epoch)
-
+        if args.local_rank == 0 and not args.without_save_wav:
+            save_inference(model, vocoder, valid_loader, sampling_rate, stats, run_dir, epoch)
+        exit()
         for batchs in loader:  # inner loop within one epoch
             for batch in batchs:
 
-                total_iters += len(batch["sign"].raw_texts)
+                total_iters += 1
                 model.set_input(batch)         # unpack data from dataset and apply preprocessing
                 loss_log = model.optimize_parameters()   # calculate loss functions, get gradients, update network weights
 
-
-                if args.local_rank == 0 and total_iters % log_step == 0:    # print training losses and save logging information to the disk
+                if args.local_rank == 0 and total_iters >= nxt_log_step:    # print training losses and save logging information to the disk
                     log = { "epoch": epoch }
                     lr_dict = model.get_learning_rate()
                     log.update(lr_dict)
                     log.update(loss_log)
+                    if args.use_wandb:
+                        wandb.log(log)
+                    nxt_log_step += log_step
 
-                if args.local_rank == 0 and total_iters % synth_step == 0 and not args.without_save_wav:
-                    ### Save Audio conditioned by text and sign
-                    output = model.fake_audio_with_sign
-                    output_lens = model.fake_audio_with_sign_lens
-                    raw_text = model.fake_raw_texts[0]
-                    video_name = model.real_sign.video_names[0]
-                    mel_len = output_lens[0].item()
-                    if mel_len == 0:
-                        print("0 length mel occured")
-                        print(raw_text)
-                    else:
-                        mel_prediction = output[0, :, :mel_len].detach().transpose(1, 2)
-                        wav_prediction = vocoder_infer(
-                            mel_prediction,
-                            vocoder,
-                            model_config,
-                            preprocess_config,
-                        )[0]
-                        sf.write(
-                            run_dir + f"wav_w_sign/synth_{total_iters // synth_step}.wav",
-                            wav_prediction, samplerate=sampling_rate)
-                        with open(pred_txt_file, "a") as f:
-                            f.write(f"{video_name} | {raw_text}\n")
-
-                    ### Save Audio conditioned by only text
-                    output = model.synth_audio
-                    output_lens = model.synth_audio_lens
-                    mel_len = output_lens[0].item()
-                    if mel_len == 0:
-                        print("0 length mel occured")
-                        print(raw_text)
-                    else:
-                        mel_prediction = output[0, :, :mel_len].detach().transpose(1, 2)
-                        wav_prediction = vocoder_infer(
-                            mel_prediction,
-                            vocoder,
-                            model_config,
-                            preprocess_config,
-                        )[0]
-                        sf.write(
-                            run_dir + f"wav_wo_sign/synth_{total_iters // synth_step}.wav",
-                            wav_prediction, samplerate=sampling_rate)
-                    del output, output_lens, mel_len, mel_prediction, wav_prediction, raw_text
-                    torch.cuda.empty_cache()
-
-                if args.local_rank == 0 and args.use_wandb and total_iters % log_step == 0:
-                    wandb.log(log)
-
-            if args.local_rank == 0:
-                progress_inner.update()
         if args.local_rank == 0:
             progress.update()
+        if args.local_rank == 0 and not args.without_save_wav:
+            save_inference(model, vocoder, valid_loader, sampling_rate, wav_dir, epoch)
         if args.local_rank == 0 and args.save_ckpt and (epoch + 1) % save_epochs == 0:
             print(f"saving the latest model {epoch=}")
             ckpt_save_path = run_dir + f"ckpt/{epoch}.pth"
             model.save_networks(ckpt_save_path)
+        torch.distributed.barrier()
 
 
 if __name__ == "__main__":
