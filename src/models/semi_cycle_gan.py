@@ -15,7 +15,7 @@ from .prosody_estimator import ProsodyEstimator1D, ProsodyEstimator2D, ProsodyDi
 from FastSpeech2.model.loss import FastSpeech2Loss
 
 
-InferenceOutput = namedtuple("InferenceOutput", "mels lens p_predictions e_predictions")
+InferenceOutput = namedtuple("InferenceOutput", "mels lens p_predictions e_predictions d_rounded")
 
 
 def make_mask_from_lens(length, max_length=None):
@@ -125,7 +125,7 @@ class BaseModel:
         Parameters:
             epoch (int) -- current epoch; used in the file name "%s_net_%s.pth" % (epoch, name)
         """
-        ckpt = torch.loat(save_path)
+        ckpt = torch.load(save_path)
         for name in self.model_names:
             if isinstance(name, str):
                 net = getattr(self, "net" + name)
@@ -293,8 +293,6 @@ class SemiCycleGANModel(BaseModel):
         with open(model_config["speaker"]["all"], "r") as f:
             for pid in f.readlines():
                 self.all_speakers.append(self.speaker_map[pid.rstrip()])
-
-        self.audio2sign = None
 
         self.step = 0
 
@@ -545,7 +543,7 @@ class SemiCycleGANModel(BaseModel):
                 pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
 
             audio_wo_sign_lens = pred.mel_lens.detach().cpu()
-            output_wo_sign = InferenceOutput(audio_wo_sign, audio_wo_sign_lens, pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy())
+            output_wo_sign = InferenceOutput(audio_wo_sign, audio_wo_sign_lens, pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy())
 
             # with sign language TTS
             pred = self.netG_sign2audio(
@@ -559,7 +557,7 @@ class SemiCycleGANModel(BaseModel):
             audio_w_sign = pred.postnet_output.masked_fill(
                 pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
             audio_w_sign_lens = pred.mel_lens
-            output_w_sign = InferenceOutput(audio_w_sign, audio_w_sign_lens, pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy())
+            output_w_sign = InferenceOutput(audio_w_sign, audio_w_sign_lens, pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy())
 
         torch.cuda.empty_cache()
         return output_wo_sign, output_w_sign

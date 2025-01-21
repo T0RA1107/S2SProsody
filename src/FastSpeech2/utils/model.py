@@ -92,7 +92,7 @@ def get_param_num(model):
 def get_vocoder(config, device):
     name = config["vocoder"]["model"]
     speaker = config["vocoder"]["speaker"]
-    hifigan_path = "/home/ubuntu/slocal/S2SProsody/src/FastSpeech2/hifigan"
+    hifigan_path = config["vocoder"]["hifigan_path"]
 
     if name == "MelGAN":
         if speaker == "LJSpeech":

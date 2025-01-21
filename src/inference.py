@@ -1,0 +1,111 @@
+import argparse
+import os
+import datetime
+import yaml
+import json
+
+import torch
+import torch.utils
+from torch.utils.data import DataLoader
+
+# from FastSpeech2.evaluate import evaluate
+from FastSpeech2.utils.model import get_vocoder
+
+from models.semi_cycle_gan import SemiCycleGANModel
+from dataset import AudioDataset, SignDataset
+from util.tool import save_inference
+
+# DDP
+import torch.distributed as dist
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def main(args, configs, configs_ft):
+    args.local_rank = 0
+    args.ngpus = 1
+
+    preprocess_config, model_config, train_config = configs
+
+    audio_dataset = AudioDataset(
+        "train.txt", preprocess_config, train_config, model_config, args)  # to get speaker info from audio train dataset
+    valid_dataset = SignDataset(
+        args, preprocess_config, train_config, partial_list_path="./valid_list.txt"
+    )
+    speaker_info = audio_dataset.get_speaker_info()
+    with open(
+        os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
+    ) as f:
+        stats = json.load(f)
+        stats = stats["pitch"] + stats["energy"][:2]
+
+
+    if "speaker_num" not in model_config:
+        model_config["speaker_num"] = audio_dataset.speaker_num
+    batch_size = train_config["optimizer"]["batch_size"]
+    group_size = 4
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=batch_size * group_size,
+        shuffle=False,
+        collate_fn=valid_dataset.collate_fn,
+        num_workers=8,
+        pin_memory=True
+    )
+
+    model = SemiCycleGANModel(
+        args, preprocess_config, model_config, train_config,
+        speaker_info=speaker_info, configs_ft=configs_ft, isTrain=False, distributed=False)      # create a model given opt.model and other options
+    model.load_networks(args.ckpt_path)
+    model.setup(train_config)               # regular setup: load and print networks; create schedulers
+
+    vocoder = get_vocoder(model_config, device)
+
+    dt_now = datetime.datetime.now()
+    run_name = dt_now.strftime("%m:%d:%H:%M")
+    run_dir = f"./output/{run_name}/"
+    if not args.without_save_wav:
+        wav_dir = run_dir + "wavs/"
+        os.makedirs(run_dir, exist_ok=True)
+        os.makedirs(wav_dir, exist_ok=True)
+
+    sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
+
+    save_inference(model, vocoder, valid_loader, sampling_rate, stats, wav_dir, -1, model_config, preprocess_config)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--restore_step", type=int, default=0)
+    parser.add_argument(
+        "-p",
+        "--preprocess_config",
+        type=str,
+        required=True,
+        help="path to preprocess.yaml",
+    )
+    parser.add_argument(
+        "--ckpt_path", type=str, required=True
+    )
+    parser.add_argument(
+        "-m", "--model_config", type=str, required=True, help="path to model.yaml"
+    )
+    parser.add_argument(
+        "-t", "--train_config", type=str, required=True, help="path to train.yaml"
+    )
+    parser.add_argument(
+        "--save_ckpt", action="store_true"
+    )
+    parser.add_argument(
+        "--without_save_wav", action="store_true"
+    )
+    args = parser.parse_args()
+
+    # Read Config
+    preprocess_config = yaml.load(
+        open(args.preprocess_config, "r"), Loader=yaml.FullLoader
+    )
+    model_config = yaml.load(open(args.model_config, "r"), Loader=yaml.FullLoader)
+    train_config = yaml.load(open(args.train_config, "r"), Loader=yaml.FullLoader)
+    configs = (preprocess_config, model_config, train_config)
+
+    main(args, configs, None)
