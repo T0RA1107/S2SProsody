@@ -82,7 +82,8 @@ def plot_mel(data, stats, name):
     plt.close()
 
 
-def save_inference(model: SemiCycleGANModel, vocoder, data_loader, sampling_rate, stats, output_dir, epoch, model_config, preprocess_config):
+def save_inference(model: SemiCycleGANModel, vocoder, data_loader, local_rank, sampling_rate, stats, output_dir, epoch, model_config, preprocess_config):
+    model.set_eval_mode()
     save_wav_dir = os.path.join(output_dir, "wavs", str(epoch))
     save_mel_dir = os.path.join(output_dir, "mels", str(epoch))
     save_metadata_dir = os.path.join(output_dir, "metadata")
@@ -139,6 +140,16 @@ def save_inference(model: SemiCycleGANModel, vocoder, data_loader, sampling_rate
                 l2_list.append(l2)
 
             torch.cuda.empty_cache()
+    metadata = pd.DataFrame({ "name": name_list, "text": text_list, "L2": l2_list })
+    metadata.to_csv(os.path.join(save_metadata_dir, f"{epoch}_{local_rank}.tsv"), sep="\t", index=False)
+
+
+def save_metadata(n_gpus, output_dir, epoch):
+    save_metadata_dir = os.path.join(output_dir, "metadata")
+    metadata = pd.concat(
+        pd.read_csv(os.path.join(save_metadata_dir, f"{epoch}_{local_rank}.tsv"), sep="\t") for local_rank in range(n_gpus)
+    ).drop_duplicates(subset="name").reset_index(drop=True)
+    l2_list = metadata["L2"]
     arg_idx = np.argsort(l2_list)[::-1]
-    metadata = pd.DataFrame({ "name": name_list, "text": text_list, "L2": l2_list, "index": arg_idx })
-    metadata.to_csv(os.path.join(save_metadata_dir, f"{epoch}.tsv"), sep="\t")
+    metadata["L2_index"] = arg_idx
+    metadata.to_csv(os.path.join(save_metadata_dir, f"{epoch}.tsv"), sep="\t", index=False)

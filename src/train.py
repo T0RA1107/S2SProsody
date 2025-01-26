@@ -21,7 +21,7 @@ from FastSpeech2.utils.model import get_vocoder
 
 from models.semi_cycle_gan import SemiCycleGANModel
 from dataset import UnpairedAudioSignDataset, SignDataset
-from util.tool import init_random_seeds, save_inference
+from util.tool import init_random_seeds, save_inference, save_metadata
 
 # DDP
 import torch.distributed as dist
@@ -50,21 +50,25 @@ def main(args, configs, configs_ft):
     dataset = UnpairedAudioSignDataset(
         "train.txt", preprocess_config, train_config, model_config, args)  # create a dataset given opt.dataset_mode and other options
     valid_dataset = SignDataset(
-        args, preprocess_config, train_config, partial_list_path="./valid_list.txt"
+        args, preprocess_config, train_config,
+        phase="test", partial_list_path="./valid_list.txt"
     )
     speaker_info = dataset.audio_dataset.get_speaker_info()
+    sign_info = dataset.sign_dataset.get_sign_prosody_info()
     with open(
         os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
     ) as f:
         stats = json.load(f)
         stats = stats["pitch"] + stats["energy"][:2]
 
-
     if distributed:
         sampler = torch.utils.data.distributed.DistributedSampler(
             dataset, num_replicas=args.ngpus, rank=args.local_rank)
+        sampler_valid = torch.utils.data.distributed.DistributedSampler(
+            valid_dataset, num_replicas=args.ngpus, rank=args.local_rank)
     else:
         sampler = None
+        sampler_valid = None
     if "speaker_num" not in model_config:
         model_config["speaker_num"] = dataset.speaker_num
     batch_size = train_config["optimizer"]["batch_size"]
@@ -81,13 +85,17 @@ def main(args, configs, configs_ft):
     valid_loader = DataLoader(
         valid_dataset,
         batch_size=batch_size * group_size,
-        shuffle=False,
+        shuffle=(sampler_valid is None),
+        sampler=sampler_valid,
         collate_fn=valid_dataset.collate_fn,
         num_workers=8,
         pin_memory=True
     )
 
-    model = SemiCycleGANModel(args, preprocess_config, model_config, train_config, speaker_info=speaker_info, configs_ft=configs_ft, distributed=distributed)      # create a model given opt.model and other options
+    model = SemiCycleGANModel(
+        args, preprocess_config, model_config, train_config,
+        speaker_info=speaker_info, sign_info=sign_info,
+        configs_ft=configs_ft, distributed=distributed)      # create a model given opt.model and other options
     model.setup(train_config)               # regular setup: load and print networks; create schedulers
 
     vocoder = get_vocoder(model_config, device)
@@ -155,13 +163,17 @@ def main(args, configs, configs_ft):
 
         if args.local_rank == 0:
             progress.update()
-        if args.local_rank == 0 and not args.without_save_wav:
-            save_inference(model, vocoder, valid_loader, sampling_rate, wav_dir, epoch, model_config, preprocess_config)
+        if not args.without_save_wav:
+            save_inference(model, vocoder, valid_loader, args.local_rank, sampling_rate, stats, wav_dir, epoch, model_config, preprocess_config)
+            torch.distributed.barrier()
+            if args.local_rank == 0:
+                save_metadata(args.ngpus, wav_dir, epoch)
         if args.local_rank == 0 and args.save_ckpt and (epoch + 1) % save_epochs == 0:
             print(f"saving the latest model {epoch=}")
             ckpt_save_path = run_dir + f"ckpt/{epoch}.pth"
             model.save_networks(ckpt_save_path)
-        torch.distributed.barrier()
+        if args.ngpus > 1:
+            torch.distributed.barrier()
 
 
 if __name__ == "__main__":

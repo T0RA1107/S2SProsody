@@ -64,6 +64,13 @@ def write_txt(pack):
     return i, torch.tensor(trans_ids), trans_ids_txt
 
 
+def expand(values, durations):
+    out = list()
+    for value, d in zip(values, durations):
+        out += [value] * max(0, int(d))
+    return np.array(out)
+
+
 class AudioDataset(Dataset):
     def __init__(
         self, filename, preprocess_config, train_config, model_config, sort=False, drop_last=False,
@@ -105,9 +112,9 @@ class AudioDataset(Dataset):
         return len(self.text)
 
     def get_speaker_info(self):
-        info_pitch =    { self.speaker_map[s]: [float("inf"), -float("inf")] for s in self.all_speakers}
-        info_energy =   { self.speaker_map[s]: [float("inf"), -float("inf")] for s in self.all_speakers}
-        info_duration = { self.speaker_map[s]: [float("inf"), -float("inf")] for s in self.all_speakers}
+        info_pitch =    { self.speaker_map[s]: [] for s in self.all_speakers}
+        info_energy =   { self.speaker_map[s]: [] for s in self.all_speakers}
+        info_duration = { self.speaker_map[s]: [] for s in self.all_speakers}
         for idx in range(self.__len__()):
             basename = self.basename[idx]
             speaker = self.speaker[idx]
@@ -131,13 +138,38 @@ class AudioDataset(Dataset):
             )
             duration = np.load(duration_path)
 
-            info_pitch[speaker_id][0] = min(info_pitch[speaker_id][0], pitch.min())
-            info_pitch[speaker_id][1] = max(info_pitch[speaker_id][1], pitch.max())
-            info_energy[speaker_id][0] = min(info_energy[speaker_id][0], energy.min())
-            info_energy[speaker_id][1] = max(info_energy[speaker_id][1], energy.max())
-            info_duration[speaker_id][0] = min(info_duration[speaker_id][0], duration.min())
-            info_duration[speaker_id][1] = max(info_duration[speaker_id][1], duration.max())
+            info_pitch[speaker_id].append(expand(pitch, duration))
+            info_energy[speaker_id].append(expand(energy, duration))
+            info_duration[speaker_id].append(duration)
 
+        info_pitch_mean = {}
+        info_pitch_std = {}
+        info_energy_mean = {}
+        info_energy_std = {}
+        info_duration_mean = {}
+        info_duration_std = {}
+        for speaker_id in info_pitch.keys():
+            pitch = np.concatenate(info_pitch[speaker_id])
+            energy = np.concatenate(info_energy[speaker_id])
+            duration = np.concatenate(info_duration[speaker_id])
+            info_pitch_mean[speaker_id] = pitch.mean()
+            info_pitch_std[speaker_id] = pitch.std()
+            info_energy_mean[speaker_id] = energy.mean()
+            info_energy_std[speaker_id] = energy.std()
+            info_duration_mean[speaker_id] = duration.mean()
+            info_duration_std[speaker_id] = duration.std()
+        info_pitch = {
+            "mean": info_pitch_mean,
+            "std": info_pitch_std,
+        }
+        info_energy = {
+            "mean": info_energy_mean,
+            "std": info_energy_std,
+        }
+        info_duration = {
+            "mean": info_duration_mean,
+            "std": info_duration_std,
+        }
         return {
             "pitch": info_pitch,
             "energy": info_energy,
@@ -268,6 +300,7 @@ class SignDataset(Dataset):
         self.drop_last = drop_last
         self.batch_size = train_config["optimizer"]["batch_size"]
         self.phase = phase
+        self.partial = partial_list_path is not None
         self.prosody_dist = train_config["loss"]["prosody"]["dist"]
         if self.prosody_dist:
             self.prosody_bins = train_config["loss"]["prosody"]["bins"]
@@ -288,14 +321,14 @@ class SignDataset(Dataset):
         assert self.label_path is not None, "Specify --label_path"
         data_frame = pd.read_csv(self.label_path, sep="\t", low_memory=False)
 
-        if partial_list_path is not None:
+        if self.partial:
             partial_mp4_list = open(partial_list_path).readlines()
             partial_id_list = [s.split("/")[-1].rstrip(".mp4\n") for s in partial_mp4_list]
+            self.partial_list = partial_id_list
 
             partial_mask = data_frame.vid == ""
             for vid in partial_id_list:
                 partial_mask |= data_frame.vid == vid
-            data_frame = data_frame[partial_mask]
         else:
             # select by split ["train", "valid"]
             data_frame = data_frame.loc[data_frame["split"].str.contains(split)]
@@ -303,7 +336,7 @@ class SignDataset(Dataset):
         def filter_missing_or_short(row):
             full_path = os.path.join(self.feat_path, f"{row['vid']}.pkl")
             ok = os.path.exists(full_path) and os.path.getsize(full_path) > 0
-            if ok and partial_list_path is None:
+            if ok and not self.partial:
                 with open(full_path, "rb") as file:
                     pose_keypoints = pickle.load(file)
                     ok = ok and (pose_keypoints.shape[0] >= 30)
@@ -311,7 +344,7 @@ class SignDataset(Dataset):
 
         is_missing_or_short = data_frame.apply(filter_missing_or_short, axis=1)
         df_filtered = data_frame[is_missing_or_short]
-        if partial_list_path is None:
+        if not self.partial:
             base_name = os.path.basename(self.label_path)
             df_filtered.to_csv(self.label_path.replace(base_name, "filtered.tsv"), sep="\t")
         # for vid in df_filtered["vid"]:
@@ -362,7 +395,7 @@ class SignDataset(Dataset):
                 f.writelines(trans_ids_txt_list)
 
         ### Filtering too long translation_token_ids
-        if partial_list_path is None:
+        if not self.partial:
             trans_id_arg = np.argsort(token_id_lens)
             token_id_lens = np.array(token_id_lens)[trans_id_arg]
             too_long_idx = -1
@@ -379,8 +412,12 @@ class SignDataset(Dataset):
             self.vid2idx = {
                 vid: i for i, vid in enumerate(self.video_names)
             }
+        if self.partial:
+            self.partial_idx = []
+            for vid in self.partial_list:
+                self.partial_idx.append(self.vid2idx[vid])
 
-        # for video-wise normalization
+        ### start generate video-wise normalization stats ###
         yid2idxs = { yid: [] for yid in self.yids }
         for i, yid in enumerate(self.yids):
             yid2idxs[yid].append(i)
@@ -398,12 +435,13 @@ class SignDataset(Dataset):
                 key_points[:, :, 1].min(),
                 key_points[:, :, 1].max()
             ]
+        ### end generate video-wise normalization stats ###
 
         assert len(self.translation_token_ids) == len(
             self.video_names), f"Text ids count:{len(self.translation_token_ids)}\tVid count:{len(self.video_names)}"
         all_len = np.array([len(tk)
                                for tk in self.translation_token_ids])
-        if partial_list_path is None:
+        if not self.partial:
             self.max_seq_len = min(
                 int(all_len.mean() + all_len.std() * 10), int(all_len.max()))
         else:
@@ -412,7 +450,25 @@ class SignDataset(Dataset):
             print(f"Max sequence length:{self.max_seq_len}")
 
     def __len__(self):
-        return len(self.video_names)
+        if self.partial:
+            return len(self.partial_idx)
+        return len(self.vid2idx)
+
+    def get_sign_prosody_info(self):
+        prosody_labels = []
+        for i in range(len(self.vid2idx)):
+            sign = self.__getitem__(i)
+            prosody_labels.append(sign.prosody_label[None,])
+        prosody_labels = np.concatenate(prosody_labels)
+        prosody_dist = prosody_labels.sum(axis=0) / prosody_labels.sum()
+
+        n, bins = prosody_dist.shape
+        x = np.arange(0, bins) / bins + 1 / (2 * bins)
+        x = x[None,].repeat(n, axis=0)
+        mean = (x * prosody_dist).sum(axis=1)
+        var  = ((x - mean[:, None]) ** 2 * prosody_dist).sum(axis=1)
+        std = var ** 0.5
+        return { "mean": mean, "std": std }
 
     def read_keypoints(self, index: int):
         vid_name = self.video_names[index]
@@ -425,8 +481,8 @@ class SignDataset(Dataset):
         pose_keypoints = self.read_keypoints(index)
         yid = self.yids[index]
         video_range = self.yid2range[yid]
-        pose_keypoints[:, :, 0] /= video_range[1] - video_range[0] + 1e-5
-        pose_keypoints[:, :, 1] /= video_range[3] - video_range[2] + 1e-5
+        pose_keypoints[:, :, 0] = (pose_keypoints[:, :, 0] - video_range[0]) / (video_range[1] - video_range[0] + 1e-5)
+        pose_keypoints[:, :, 1] = (pose_keypoints[:, :, 1] - video_range[2]) / (video_range[3] - video_range[2] + 1e-5)
         pose_keypoints[:, :, :2] = pose_keypoints[:, :, :2] * 2 - 1
         return pose_keypoints
 
@@ -507,7 +563,6 @@ class SignDataset(Dataset):
 
         # pad pose
         T, V, C = pose_cated.shape
-        # assert T == len(filenames)
         if T < self.visual_token_num:
             diff = self.visual_token_num - T
             pose_output = np.concatenate(
@@ -581,6 +636,8 @@ class SignDataset(Dataset):
         return tokens, mask, tokens_length
 
     def __getitem__(self, index: int):
+        if self.partial:
+            index = self.partial_idx[index]
         if self.phase == "train":
             raw_texts = self.translation[index]
             text_tokens, mask, token_length = self.pad_token_ids(
@@ -602,14 +659,17 @@ class SignDataset(Dataset):
             return SignTrainData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, video_name)  # , vn_idxs, vn_len
         elif self.phase == "test":
             raw_texts = self.translation[index]
-            visual_prefix, visual_length = self.read_pose_files(index)
+            text_tokens, mask, token_length = self.pad_token_ids(
+                index)  # [max_seq_len]
+            visual_prefix, visual_length, _ = self.read_pose_files(index)
+            video_name = self.video_names[index]
             # visual_prefix[:, :, :2] = self.normalize_joints(
             #     visual_prefix[:, :, :2])
             # reorder [T V C] -> [C T V]
             visual_prefix = np.transpose(visual_prefix, (2, 0, 1))
             visual_prefix = torch.from_numpy(visual_prefix)
             visual_prefix = visual_prefix.type(torch.FloatTensor)
-            return raw_texts, visual_prefix, index, visual_length
+            return SignTrainData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, _, video_name)
 
     def reprocess(self, raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, video_names, idxs):
         raw_texts = [raw_texts[idx] for idx in idxs]

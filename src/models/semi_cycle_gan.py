@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import os
+import re
 from collections import OrderedDict, namedtuple
 import itertools
 import numpy as np
@@ -25,6 +26,12 @@ def make_mask_from_lens(length, max_length=None):
     idxs = torch.arange(0, max_length, device=length.device).unsqueeze(0).repeat(bs, 1)
     mask = idxs < length.unsqueeze(1).repeat(1, max_length)
     return mask
+
+def recursive_set_params(net, name, params):
+    if len(name) == 1:
+        setattr(net, name[0], params)
+    else:
+        recursive_set_params(getattr(net, name[0]), name[1:], params)
 
 
 class BaseModel:
@@ -131,16 +138,18 @@ class BaseModel:
                 net = getattr(self, "net" + name)
                 if isinstance(net, torch.nn.parallel.DistributedDataParallel):
                     net = net.module
+                # net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net)
                 # if you are using PyTorch newer than 0.4 (e.g., built from
                 # GitHub source), you can remove str() on self.device
                 state_dict = ckpt[name]
                 if hasattr(state_dict, "_metadata"):
                     del state_dict._metadata
 
-                # patch InstanceNorm checkpoints prior to 0.4
-                for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
-                    self.__patch_instance_norm_state_dict(state_dict, net, key.split("."))
+                # # patch InstanceNorm checkpoints prior to 0.4
+                # for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
+                #     self.__patch_instance_norm_state_dict(state_dict, net, key.split("."))
                 net.load_state_dict(state_dict)
+                net.to(self.device)
 
     def save_networks(self, save_path):
         """Save all the networks to the disk.
@@ -252,7 +261,8 @@ class SemiCycleGANModel(BaseModel):
 
         return parser
 
-    def __init__(self, args, preprocess_config, model_config, train_config, speaker_info=None, configs_ft=None, isTrain=True, distributed=False):
+    def __init__(self, args, preprocess_config, model_config, train_config,
+                 speaker_info=None, sign_info=None, configs_ft=None, isTrain=True, distributed=False):
         """Initialize the CycleGAN class.
 
         Parameters:
@@ -262,6 +272,8 @@ class SemiCycleGANModel(BaseModel):
         self.prosody_dist = train_config["loss"]["prosody"]["dist"]
         if speaker_info is not None:
             self.speaker_info = speaker_info
+        if sign_info is not None:
+            self.sign_info = sign_info
 
         # define networks (both Generators and discriminators)
         # The naming is different from those used in the paper.
@@ -361,8 +373,10 @@ class SemiCycleGANModel(BaseModel):
 
         speakers = random.choices(self.all_speakers, k=batch_size)
         if self.speaker_info is not None:
-            energy_info = torch.tensor([self.speaker_info["energy"][i] for i in speakers], device=self.device).float()
-            pitch_info  = torch.tensor([self.speaker_info["pitch"][i] for i in speakers], device=self.device).float()
+            energy_mean_info = torch.tensor([self.speaker_info["energy"]["mean"][i] for i in speakers], device=self.device).float()
+            energy_std_info  = torch.tensor([self.speaker_info["energy"]["std"][i] for i in speakers], device=self.device).float()
+            pitch_mean_info  = torch.tensor([self.speaker_info["pitch"]["mean"][i] for i in speakers], device=self.device).float()
+            pitch_std_info   = torch.tensor([self.speaker_info["pitch"]["std"][i] for i in speakers], device=self.device).float()
         speakers = torch.tensor(speakers, device=self.device).long()
 
         # without sign language TTS
@@ -404,12 +418,17 @@ class SemiCycleGANModel(BaseModel):
         self.speakers = speakers.detach().cpu()
 
         if self.speaker_info is not None:
-            norm_energy = (pred.e_predictions - energy_info[:, [0]]) / (energy_info[:, [1]] - energy_info[:, [0]] + 1e-5)
+            L = pred.e_predictions.shape[1]
+            energy_mean_info = energy_mean_info.unsqueeze(1).repeat(1, L)
+            energy_std_info = energy_std_info.unsqueeze(1).repeat(1, L)
+            norm_energy = (pred.e_predictions - energy_mean_info) / (energy_std_info + 1e-5)
             norm_energy = norm_energy.masked_fill(pred.src_masks, 0.0)
             self.energy_mean = norm_energy.sum(dim=1) / token_length
             self.energy_var = (norm_energy ** 2).sum(dim=1) / token_length - self.energy_mean ** 2
 
-            norm_pitch = (pred.p_predictions - pitch_info[:, [0]]) / (pitch_info[:, [1]] - pitch_info[:, [0]] + 1e-5)
+            pitch_mean_info = pitch_mean_info.unsqueeze(1).repeat(1, L)
+            pitch_std_info = pitch_std_info.unsqueeze(1).repeat(1, L)
+            norm_pitch = (pred.p_predictions - pitch_mean_info) / (pitch_std_info + 1e-5)
             norm_pitch = norm_pitch.masked_fill(pred.src_masks, 0.0)
             self.pitch_mean = norm_pitch.sum(dim=1) / token_length
             self.pitch_var = (norm_pitch ** 2).sum(dim=1) / token_length - self.pitch_mean ** 2
@@ -494,10 +513,12 @@ class SemiCycleGANModel(BaseModel):
         bs, _, bins = self.prosody_label.shape
         x = torch.arange(0, bins) / bins + 1 / (2 * bins)
         x = x.unsqueeze(0).repeat(bs, 1).to(self.device, non_blocking=True)
-        velocity_hand_mean = (self.prosody_label[:, 0] * x).sum(dim=1)
-        velocity_hand_var = (self.prosody_label[:, 0] * (x - velocity_hand_mean.unsqueeze(1)) ** 2).sum(dim=1)
-        velocity_face_mean = (self.prosody_label[:, 0] * x).sum(dim=1)
-        velocity_face_var = (self.prosody_label[:, 0] * (x - velocity_face_mean.unsqueeze(1)) ** 2).sum(dim=1)
+        x_velocity_hand = (x - self.sign_info["mean"][0]) / (self.sign_info["std"][0] + 1e-5)
+        x_velocity_face = (x - self.sign_info["mean"][1]) / (self.sign_info["std"][1] + 1e-5)
+        velocity_hand_mean = (self.prosody_label[:, 0] * x_velocity_hand).sum(dim=1)
+        velocity_hand_var = (self.prosody_label[:, 0] * (x_velocity_hand - velocity_hand_mean.unsqueeze(1)) ** 2).sum(dim=1)
+        velocity_face_mean = (self.prosody_label[:, 1] * x_velocity_face).sum(dim=1)
+        velocity_face_var = (self.prosody_label[:, 1] * (x_velocity_face - velocity_face_mean.unsqueeze(1)) ** 2).sum(dim=1)
         if self.speaker_info is not None:
             loss_reg_energy_mean = self.criterionRegdist(self.energy_mean, velocity_hand_mean)
             loss_reg_pitch_mean = self.criterionRegdist(self.pitch_mean, velocity_face_mean)
