@@ -21,7 +21,7 @@ from FastSpeech2.utils.model import get_vocoder
 
 from models.semi_cycle_gan import SemiCycleGANModel
 from dataset import UnpairedAudioSignDataset, SignDataset
-from util.tool import init_random_seeds, save_inference, save_metadata
+from util.tool import init_random_seeds, save_inference, save_metadata, save_validation_loss
 
 # DDP
 import torch.distributed as dist
@@ -51,7 +51,11 @@ def main(args, configs, configs_ft):
         "train.txt", preprocess_config, train_config, model_config, args)  # create a dataset given opt.dataset_mode and other options
     valid_dataset = SignDataset(
         args, preprocess_config, train_config,
-        phase="test", partial_list_path="./valid_list.txt"
+        phase="train", split="val"
+    )
+    inference_dataset = SignDataset(
+        args, preprocess_config, train_config,
+        phase="test", split="val", partial_list_path="./valid_list.txt"
     )
     speaker_info = dataset.audio_dataset.get_speaker_info()
     sign_info = dataset.sign_dataset.get_sign_prosody_info()
@@ -66,9 +70,12 @@ def main(args, configs, configs_ft):
             dataset, num_replicas=args.ngpus, rank=args.local_rank)
         sampler_valid = torch.utils.data.distributed.DistributedSampler(
             valid_dataset, num_replicas=args.ngpus, rank=args.local_rank)
+        sampler_inference = torch.utils.data.distributed.DistributedSampler(
+            inference_dataset, num_replicas=args.ngpus, rank=args.local_rank)
     else:
         sampler = None
         sampler_valid = None
+        sampler_inference = None
     if "speaker_num" not in model_config:
         model_config["speaker_num"] = dataset.speaker_num
     batch_size = train_config["optimizer"]["batch_size"]
@@ -88,6 +95,15 @@ def main(args, configs, configs_ft):
         shuffle=(sampler_valid is None),
         sampler=sampler_valid,
         collate_fn=valid_dataset.collate_fn,
+        num_workers=8,
+        pin_memory=True
+    )
+    inference_loader = DataLoader(
+        inference_dataset,
+        batch_size=batch_size * group_size,
+        shuffle=(sampler_inference is None),
+        sampler=sampler_inference,
+        collate_fn=inference_dataset.collate_fn,
         num_workers=8,
         pin_memory=True
     )
@@ -163,8 +179,23 @@ def main(args, configs, configs_ft):
 
         if args.local_rank == 0:
             progress.update()
+        if args.use_wandb:
+            torch.distributed.barrier()
+            valid_loss_log = save_validation_loss(model, valid_loader)
+            valid_loss_logs = { key: [torch.zeros_like(val).to(args.local_rank) for _ in range(args.ngpus)] if args.local_rank == 0 else None for key, val in valid_loss_log.items() }
+            for key, val in valid_loss_log.items():
+                torch.distributed.gather(val.to(args.local_rank), gather_list=valid_loss_logs[key], dst=0)
+            if args.local_rank == 0:
+                valid_loss_log = {
+                    key: torch.tensor([valid_loss_logs[key][i].cpu() for i in range(args.ngpus)]).mean()
+                    for key in valid_loss_log
+                }
+                wandb.log(valid_loss_log)
+            del valid_loss_log, valid_loss_logs
+            torch.cuda.empty_cache()
         if not args.without_save_wav:
-            save_inference(model, vocoder, valid_loader, args.local_rank, sampling_rate, stats, wav_dir, epoch, model_config, preprocess_config)
+            torch.distributed.barrier()
+            save_inference(model, vocoder, inference_loader, args.local_rank, sampling_rate, stats, wav_dir, epoch, model_config, preprocess_config)
             torch.distributed.barrier()
             if args.local_rank == 0:
                 save_metadata(args.ngpus, wav_dir, epoch)

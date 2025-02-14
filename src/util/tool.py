@@ -153,3 +153,21 @@ def save_metadata(n_gpus, output_dir, epoch):
     arg_idx = np.argsort(l2_list)[::-1]
     metadata["L2_index"] = arg_idx
     metadata.to_csv(os.path.join(save_metadata_dir, f"{epoch}.tsv"), sep="\t", index=False)
+
+
+def save_validation_loss(model: SemiCycleGANModel, data_loader):
+    valid_loss_logs = {
+        "GAN loss/G (valid)": [],
+        "prosody loss/v_loss (valid)": [],
+        "prosody loss/a_loss (valid)": [],
+        "prosody loss/total (valid)": [],
+        "Regularization/Energy mean (valid)": [],
+        "Regularization/Pitch mean (valid)": [],
+    }
+    for batchs in data_loader:
+        for batch in batchs:
+            loss_log = model.validate(batch)
+            for key, val in loss_log.items():
+                valid_loss_logs[key].append(val)
+
+    return { key: torch.tensor(val).mean() for key, val in valid_loss_logs.items() }

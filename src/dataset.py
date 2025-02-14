@@ -300,6 +300,7 @@ class SignDataset(Dataset):
         self.drop_last = drop_last
         self.batch_size = train_config["optimizer"]["batch_size"]
         self.phase = phase
+        self.split = split
         self.partial = partial_list_path is not None
         self.prosody_dist = train_config["loss"]["prosody"]["dist"]
         if self.prosody_dist:
@@ -334,9 +335,9 @@ class SignDataset(Dataset):
             data_frame = data_frame.loc[data_frame["split"].str.contains(split)]
 
         def filter_missing_or_short(row):
-            full_path = os.path.join(self.feat_path, f"{row['vid']}.pkl")
+            full_path = os.path.join(self.feat_path, self.split, f"{row['vid']}.pkl")
             ok = os.path.exists(full_path) and os.path.getsize(full_path) > 0
-            if ok and not self.partial:
+            if ok and self.phase == "train":
                 with open(full_path, "rb") as file:
                     pose_keypoints = pickle.load(file)
                     ok = ok and (pose_keypoints.shape[0] >= 30)
@@ -344,9 +345,9 @@ class SignDataset(Dataset):
 
         is_missing_or_short = data_frame.apply(filter_missing_or_short, axis=1)
         df_filtered = data_frame[is_missing_or_short]
-        if not self.partial:
+        if self.local_rank == 0:
             base_name = os.path.basename(self.label_path)
-            df_filtered.to_csv(self.label_path.replace(base_name, "filtered.tsv"), sep="\t")
+            df_filtered.to_csv(self.label_path.replace(base_name, f"filtered_{self.split}.tsv"), sep="\t")
         # for vid in df_filtered["vid"]:
         #     full_path = os.path.join(self.feat_path, f"{vid}.pkl")
         #     with open(full_path, "rb") as file:
@@ -374,28 +375,48 @@ class SignDataset(Dataset):
         # self.max_vns = max(vn_lens)
 
         token_id_lens = [0 for _ in range(len(self.translation))]
+        self.translation_token_ids = [np.array([]) for _ in range(len(self.translation))]
         if os.path.exists(preprocess_config["preprocessing_sign"]["translation_token_ids"]):
-            self.translation_token_ids = [np.array([]) for _ in range(len(self.translation))]
             for t in open(preprocess_config["preprocessing_sign"]["translation_token_ids"]).readlines():
                 vid, trans_ids_str = t.rstrip("\n").split("|")
                 trans_ids = list(map(int, trans_ids_str.split(" ")))
                 if vid in self.vid2idx:
                     self.translation_token_ids[self.vid2idx[vid]] = np.array(trans_ids)
                     token_id_lens[self.vid2idx[vid]] = len(trans_ids)
+            # for new vid
+            new_vids = []
+            new_translations = []
+            for vid in self.video_names:
+                if token_id_lens[self.vid2idx[vid]] == 0:
+                    new_vids.append(vid)
+                    new_translations.append(self.translation[self.vid2idx[vid]])
+
+            if new_vids:
+                pool = Pool(processes=32)
+                trans_ids_txt_list = ["" for _ in range(len(self.translation))]
+                pbar = tqdm(total=len(new_vids), desc="Make translation ids", leave=False)
+                for i, trans_ids, trans_ids_txt in pool.imap_unordered(write_txt, enumerate(zip(new_vids, new_translations, [preprocess_config] * len(new_vids)))):
+                    self.translation_token_ids[i] = np.array(trans_ids)
+                    trans_ids_txt_list[i] = trans_ids_txt
+                    token_id_lens[i] = len(self.translation_token_ids[i])
+                    pbar.update(1)
+                with open(preprocess_config["preprocessing_sign"]["translation_token_ids"], "a") as f:
+                    f.writelines(trans_ids_txt_list)
         else:
             pool = Pool(processes=32)
-            self.translation_token_ids = [np.array([]) for _ in range(len(self.translation))]
             trans_ids_txt_list = ["" for _ in range(len(self.translation))]
+            pbar = tqdm(total=len(new_vids), desc="Make translation ids", leave=False)
 
             for i, trans_ids, trans_ids_txt in pool.imap_unordered(write_txt, enumerate(zip(self.video_names, self.translation, [preprocess_config] * len(self.translation)))):
                 self.translation_token_ids[i] = np.array(trans_ids)
                 trans_ids_txt_list[i] = trans_ids_txt
                 token_id_lens[i] = len(self.translation_token_ids[i])
+                pbar.update(1)
             with open(preprocess_config["preprocessing_sign"]["translation_token_ids"], "w") as f:
                 f.writelines(trans_ids_txt_list)
 
         ### Filtering too long translation_token_ids
-        if not self.partial:
+        if not self.partial and self.phase == "train":
             trans_id_arg = np.argsort(token_id_lens)
             token_id_lens = np.array(token_id_lens)[trans_id_arg]
             too_long_idx = -1
@@ -441,7 +462,7 @@ class SignDataset(Dataset):
             self.video_names), f"Text ids count:{len(self.translation_token_ids)}\tVid count:{len(self.video_names)}"
         all_len = np.array([len(tk)
                                for tk in self.translation_token_ids])
-        if not self.partial:
+        if not self.partial and self.phase == "train":
             self.max_seq_len = min(
                 int(all_len.mean() + all_len.std() * 10), int(all_len.max()))
         else:
@@ -472,7 +493,7 @@ class SignDataset(Dataset):
 
     def read_keypoints(self, index: int):
         vid_name = self.video_names[index]
-        file_path = os.path.join(self.feat_path, f"{vid_name}.pkl")
+        file_path = os.path.join(self.feat_path, self.split, f"{vid_name}.pkl")
         with open(file_path, "rb") as f:
             pose_keypoints = pickle.load(f)
         return pose_keypoints

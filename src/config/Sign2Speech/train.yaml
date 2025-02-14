@@ -7,7 +7,7 @@ fine-tuning: "./FastSpeech2/config/VCTK"
 
 optimizer:
   batch_size: 20 # 16
-  lr_G_s2a: 0.0001
+  lr_G_s2a: 0.00001
   lr_D_a: 0.01
   lr_fine-tuning: 0.001
   betas: [0.5, 0.9]
@@ -25,8 +25,10 @@ loss:
     bins: 32
   weight:
     prosody: 0.1
-    regdist_mean: 1
+    regdist_mean: 0.1
     regdist_var: 10
+  PGR:
+    margin: 0.5
 
 discriminator:
   noise:
@@ -45,10 +47,10 @@ GAN:
 gpu_ids: [0, 1]
 
 step:
-  total_step: 50 # 900000
+  total_step: 30 # 900000
   step_count: 0
-  log_step: 100
+  log_step: 50
   synth_step: 1000
   val_step: 1000
-  save_epochs: 10
+  save_epochs: 1
   n_epochs_decay: 0
