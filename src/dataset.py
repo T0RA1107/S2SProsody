@@ -24,46 +24,6 @@ SignTrainData = namedtuple("SignTrainData", "raw_texts text_tokens mask visual_p
 SignTestData = namedtuple("SignTestData", "raw_texts visual_prefix index visual_length")
 
 
-def read_lexicon(lex_path):
-    lexicon = {}
-    with open(lex_path) as f:
-        for line in f:
-            temp = re.split(r"\s+", line.strip("\n"))
-            word = temp[0]
-            phones = temp[1:]
-            if word.lower() not in lexicon:
-                lexicon[word.lower()] = phones
-    return lexicon
-
-
-def preprocess_english(text, preprocess_config):
-    text = text.rstrip(punctuation)
-    lexicon = read_lexicon(preprocess_config["path"]["lexicon_path"])
-
-    g2p = G2p()
-    phones = []
-    words = re.split(r"([,;.\-\?\!\s+])", text)
-    for w in words:
-        if w.lower() in lexicon:
-            phones += lexicon[w.lower()]
-        else:
-            phones += list(filter(lambda p: p != " ", g2p(w)))
-    phones = "{" + "}{".join(phones) + "}"
-    phones = re.sub(r"\{[^\w\s]?\}", "{sp}", phones)
-    phones = phones.replace("}{", " ")
-
-    return text_to_sequence(
-            phones, preprocess_config["preprocessing"]["text"]["text_cleaners"]
-        )
-
-
-def write_txt(pack):
-    i, (vid, trans, preprocess_config) = pack
-    trans_ids = preprocess_english(trans, preprocess_config)
-    trans_ids_txt = "{}|{}\n".format(vid, " ".join(map(str, trans_ids)))
-    return i, torch.tensor(trans_ids), trans_ids_txt
-
-
 def expand(values, durations):
     out = list()
     for value, d in zip(values, durations):
@@ -348,11 +308,6 @@ class SignDataset(Dataset):
         if self.local_rank == 0:
             base_name = os.path.basename(self.label_path)
             df_filtered.to_csv(self.label_path.replace(base_name, f"filtered_{self.split}.tsv"), sep="\t")
-        # for vid in df_filtered["vid"]:
-        #     full_path = os.path.join(self.feat_path, f"{vid}.pkl")
-        #     with open(full_path, "rb") as file:
-        #         pose_keypoints = pickle.load(file)
-        #         assert pose_keypoints.shape[0] >= 30, pose_keypoints.shape[0]
         if self.local_rank == 0:
             print(f"Split:{split}\nBefore filtering: {len(data_frame)}\n After filtering: {len(df_filtered)}")
         # translation labels and sample names (split agnostic)
@@ -363,17 +318,6 @@ class SignDataset(Dataset):
             vid: i for i, vid in enumerate(self.video_names)
         }
 
-        # self.vn_vocab = 5523
-        # self.matched_VNs = json.load(open("./GloFE/notebooks/openasl-v1.0/uncased_filtred_glove_VN_matched_train.json", "r"))
-        # self.vn_to_idx = {}
-        # with open("./GloFE/notebooks/openasl-v1.0/uncased_filtred_glove_VN_idxs.txt", "r") as f:
-        #     content = f.readlines()
-        #     for line in content:
-        #         items = line.strip().split(" ")
-        #         self.vn_to_idx[items[1]] = int(items[0])
-        # vn_lens = [len(v) for _,v in self.matched_VNs.items()]
-        # self.max_vns = max(vn_lens)
-
         token_id_lens = [0 for _ in range(len(self.translation))]
         self.translation_token_ids = [np.array([]) for _ in range(len(self.translation))]
         if os.path.exists(preprocess_config["preprocessing_sign"]["translation_token_ids"]):
@@ -383,37 +327,8 @@ class SignDataset(Dataset):
                 if vid in self.vid2idx:
                     self.translation_token_ids[self.vid2idx[vid]] = np.array(trans_ids)
                     token_id_lens[self.vid2idx[vid]] = len(trans_ids)
-            # for new vid
-            new_vids = []
-            new_translations = []
-            for vid in self.video_names:
-                if token_id_lens[self.vid2idx[vid]] == 0:
-                    new_vids.append(vid)
-                    new_translations.append(self.translation[self.vid2idx[vid]])
-
-            if new_vids:
-                pool = Pool(processes=32)
-                trans_ids_txt_list = ["" for _ in range(len(self.translation))]
-                pbar = tqdm(total=len(new_vids), desc="Make translation ids", leave=False)
-                for i, trans_ids, trans_ids_txt in pool.imap_unordered(write_txt, enumerate(zip(new_vids, new_translations, [preprocess_config] * len(new_vids)))):
-                    self.translation_token_ids[i] = np.array(trans_ids)
-                    trans_ids_txt_list[i] = trans_ids_txt
-                    token_id_lens[i] = len(self.translation_token_ids[i])
-                    pbar.update(1)
-                with open(preprocess_config["preprocessing_sign"]["translation_token_ids"], "a") as f:
-                    f.writelines(trans_ids_txt_list)
-        else:
-            pool = Pool(processes=32)
-            trans_ids_txt_list = ["" for _ in range(len(self.translation))]
-            pbar = tqdm(total=len(new_vids), desc="Make translation ids", leave=False)
-
-            for i, trans_ids, trans_ids_txt in pool.imap_unordered(write_txt, enumerate(zip(self.video_names, self.translation, [preprocess_config] * len(self.translation)))):
-                self.translation_token_ids[i] = np.array(trans_ids)
-                trans_ids_txt_list[i] = trans_ids_txt
-                token_id_lens[i] = len(self.translation_token_ids[i])
-                pbar.update(1)
-            with open(preprocess_config["preprocessing_sign"]["translation_token_ids"], "w") as f:
-                f.writelines(trans_ids_txt_list)
+        if not all(token_id_lens):
+            raise ValueError("Prepare appropriate translation_token_ids file.")
 
         ### Filtering too long translation_token_ids
         if not self.partial and self.phase == "train":

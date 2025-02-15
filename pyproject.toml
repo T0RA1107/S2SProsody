@@ -40,6 +40,24 @@ ffmpeg-python = "^0.2.0"
 wandb = "^0.18.1"
 fastdtw = "^0.3.4"
 
+[tool.poetry.dev-dependencies]
+black = "^22.1.0"
+flake8 = "^4.0.1"
+isort = "^5.10.1"
+mypy = "^0.931"
+pytest = "^7.0.1"
+pytest-cov = "^3.0.0"
+pytest-mock = "^3.7.0"
+jupyterlab = "^3.3.0"
+bandit = "^1.7.4"
+poethepoet = "^0.13.1"
+flake8-bugbear = "22.1.11"
+flake8-builtins = "1.5.3"
+flake8-eradicate = "1.2.0"
+pep8-naming = "0.12.1"
+flake8-expression-complexity = "0.0.10"
+flake8-cognitive-complexity = "0.1.0"
+flake8-pytest-style = "1.6.0"
 
 [build-system]
 requires = ["poetry-core"]
