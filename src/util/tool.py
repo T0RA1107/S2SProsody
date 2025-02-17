@@ -152,7 +152,7 @@ def save_metadata(n_gpus, output_dir, epoch):
     for local_rank in range(n_gpus):
         os.remove(os.path.join(save_metadata_dir, f"{epoch}_{local_rank}.tsv"))
     l2_list = metadata["L2"]
-    arg_idx = np.argsort(l2_list)[::-1]
+    arg_idx = len(l2_list) - np.argsort(np.argsort(l2_list))
     metadata["L2_index"] = arg_idx
     metadata.to_csv(os.path.join(save_metadata_dir, f"{epoch}.tsv"), sep="\t", index=False)
 
