@@ -8,14 +8,44 @@ PRInfo = namedtuple("PRInfo", "v_loss a_loss total")
 PGRInfo = namedtuple("PGRInfo", "energy pitch")
 
 
+def sinkhorn_log(r, c, cost_matrix, lambd=1.0, num_iters=100, eps=1e-8):
+    K = -cost_matrix * lambd
+    batch_size = r.shape[0]
+    device = r.device
+    K = K.unsqueeze(0).repeat(batch_size, 1, 1)
+    logu = torch.zeros_like(r, device=device)
+    logv = torch.zeros_like(c, device=device)
+    logr = torch.log(r + eps)
+    logc = torch.log(c + eps)
+    for _ in range(num_iters):
+        logu = logr - torch.logsumexp(K + logv.unsqueeze(1), axis=2)
+        logv = logc - torch.logsumexp(K + logu.unsqueeze(2), axis=1)
+    P = torch.exp(logu.unsqueeze(2) + K + logv.unsqueeze(1))
+    d = torch.sum(P * cost_matrix, dim=(1, 2))
+    return d
+
+
+class EarthMoversDistanceLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, pred, label):
+        dim = pred.shape[-1]
+        pred = F.softmax(pred, dim=-1)
+        bins = torch.linspace(0, 1, dim + 1)
+        x = (bins[1:] + bins[:-1]) / 2
+        cost_matrix = torch.abs(x.reshape(1, -1).repeat(dim, 1) - x.reshape(-1, 1).repeat(1, dim))
+        return sinkhorn_log(pred, label, cost_matrix.to(pred.device)).mean()
+
+
 class ProsodyReconstructionLoss(nn.Module):
     def __init__(self):
         super().__init__()
-        self.cross_entropy_loss = nn.CrossEntropyLoss()
+        self.distribution_loss = EarthMoversDistanceLoss()
 
     def forward(self, pred_prosody_label, prosody_label):
         loss_log = {}
-        loss_prosody = [self.cross_entropy_loss(pred_prosody_label[i], prosody_label[:, i]) for i in range(len(pred_prosody_label))]
+        loss_prosody = [self.distribution_loss(pred_prosody_label[i], prosody_label[:, i]) for i in range(len(pred_prosody_label))]
 
         loss_prosody_total = sum(loss_prosody) / 4.
         loss_log["prosody loss/total"] = loss_prosody_total.detach().cpu()

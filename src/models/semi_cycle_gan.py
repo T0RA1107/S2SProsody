@@ -602,16 +602,16 @@ class SemiCycleGANModel(BaseModel):
         output_wo_sign, output_w_sign, speakers = self.forward()      # compute fake images and reconstruction images.
         # G_A and G_B
         self.set_requires_grad([self.netD_audio], False)  # Ds require no gradients when optimizing Gs
-        self.optimizer_G.zero_grad(set_to_none=True)  # set G"s gradients to zero
+        self.optimizer_G.zero_grad(set_to_none=True)  # set G's gradients to zero
         loss_log_G = self.backward_G(output_wo_sign, output_w_sign, speakers)             # calculate gradients for G
         loss_log.update(loss_log_G)
-        self.optimizer_G.step()       # update G"s weights
+        self.optimizer_G.step()       # update G's weights
         if self.step == 0:
             # D_A and D_B
             self.set_requires_grad([self.netD_audio], True)
-            self.optimizer_D.zero_grad(set_to_none=True)   # set D"s gradients to zero
+            self.optimizer_D.zero_grad(set_to_none=True)   # set D's gradients to zero
             self.loss_log_D = self.backward_D_audio(output_w_sign)      # calculate gradients for D_audio
-            self.optimizer_D.step()  # update D_A and D_B"s weights
+            self.optimizer_D.step()  # update D_A and D_B's weights
         self.step = (self.step + 1) % 2
         loss_log.update(self.loss_log_D)
         torch.cuda.empty_cache()

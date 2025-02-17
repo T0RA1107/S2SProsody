@@ -4,6 +4,7 @@ import datetime
 import random
 import yaml
 import json
+import gc
 
 import numpy as np
 import pandas as pd
@@ -160,6 +161,8 @@ def main(args, configs, configs_ft):
     if args.local_rank == 0:
         progress = tqdm(total=len(range(step_count, total_step + n_epochs_decay)), desc="Training")
         nxt_log_step = log_step
+    from torch.profiler import profile, record_function, ProfilerActivity
+    import time
     for epoch in range(step_count, total_step + n_epochs_decay):    # outer loop for different epochs.
         model.update_learning_rate()    # update learning rates in the beginning of every epoch.
         if distributed:
@@ -215,6 +218,7 @@ def main(args, configs, configs_ft):
             model.save_networks(ckpt_save_path)
         if distributed:
             torch.distributed.barrier()
+        gc.collect()
 
 
 if __name__ == "__main__":
