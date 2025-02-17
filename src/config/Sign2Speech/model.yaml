@@ -50,8 +50,10 @@ D_audio:
 
 multi_speaker: True
 speaker:
-  all: "../data/VCTK-Corpus/preprocess/females.txt"
-  target: 95
+  all: "/data/VCTK-Corpus/preprocess/all_speakers.txt"
+  target:
+    female: 95
+    male: 101
 
 max_seq_len: 5000
 

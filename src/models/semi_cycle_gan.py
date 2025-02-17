@@ -295,7 +295,7 @@ class SemiCycleGANModel(BaseModel):
         # speaker info
         with open(os.path.join(preprocess_config["path"]["preprocessed_path"], "speakers.json")) as f:
             self.speaker_map = json.load(f)
-        self.target_speaker = model_config["speaker"]["target"]
+        self.target_speakers = model_config["speaker"]["target"]
         self.all_speakers = []
         with open(model_config["speaker"]["all"], "r") as f:
             for pid in f.readlines():
@@ -554,13 +554,13 @@ class SemiCycleGANModel(BaseModel):
         torch.cuda.empty_cache()
         return loss_log
 
-    def inference(self, sign):
-        batch_size = sign.text_tokens.shape[0]
+    def inference(self, sign, vid2gender):
         token_length = sign.token_length.to(self.device, non_blocking=True)
         max_src_len = token_length.max().to(self.device, non_blocking=True)
         text_tokens = sign.text_tokens[:, :max_src_len].to(self.device, non_blocking=True)
 
-        speakers = torch.full((batch_size,), self.target_speaker, device=self.device).long()
+        speakers = [self.target_speakers[vid2gender[vid]] for vid in sign.video_names]
+        speakers = torch.tensor(speakers, device=self.device).long()
 
         # without sign language TTS
         with torch.no_grad():

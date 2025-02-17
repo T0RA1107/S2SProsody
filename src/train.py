@@ -49,6 +49,9 @@ def main(args, configs, configs_ft):
 
     dataset = UnpairedAudioSignDataset(
         "train.txt", preprocess_config, train_config, model_config, args)  # create a dataset given opt.dataset_mode and other options
+    if args.local_rank == 0:
+        print("Audio Size:", dataset.audio_size)
+        print("Sign  Size:", dataset.sign_size)
     valid_dataset = SignDataset(
         args, preprocess_config, train_config,
         phase="train", split="val"
@@ -180,11 +183,15 @@ def main(args, configs, configs_ft):
         if args.local_rank == 0:
             progress.update()
         if args.use_wandb:
-            torch.distributed.barrier()
+            if distributed:
+                torch.distributed.barrier()
             valid_loss_log = save_validation_loss(model, valid_loader)
             valid_loss_logs = { key: [torch.zeros_like(val).to(args.local_rank) for _ in range(args.ngpus)] if args.local_rank == 0 else None for key, val in valid_loss_log.items() }
             for key, val in valid_loss_log.items():
-                torch.distributed.gather(val.to(args.local_rank), gather_list=valid_loss_logs[key], dst=0)
+                if distributed:
+                    torch.distributed.gather(val.to(args.local_rank), gather_list=valid_loss_logs[key], dst=0)
+                else:
+                    valid_loss_logs[key][0] = valid_loss_log[key]
             if args.local_rank == 0:
                 valid_loss_log = {
                     key: torch.tensor([valid_loss_logs[key][i].cpu() for i in range(args.ngpus)]).mean()
@@ -194,16 +201,19 @@ def main(args, configs, configs_ft):
             del valid_loss_log, valid_loss_logs
             torch.cuda.empty_cache()
         if not args.without_save_wav:
-            torch.distributed.barrier()
-            save_inference(model, vocoder, inference_loader, args.local_rank, sampling_rate, stats, wav_dir, epoch, model_config, preprocess_config)
-            torch.distributed.barrier()
+            if distributed:
+                torch.distributed.barrier()
+            save_inference(model, vocoder, inference_loader, args.local_rank, sampling_rate, stats, wav_dir, epoch, model_config, preprocess_config, inference_dataset.partial_vid2gender)
+            if distributed:
+                torch.distributed.barrier()
             if args.local_rank == 0:
                 save_metadata(args.ngpus, wav_dir, epoch)
+            torch.cuda.empty_cache()
         if args.local_rank == 0 and args.save_ckpt and (epoch + 1) % save_epochs == 0:
             print(f"saving the latest model {epoch=}")
             ckpt_save_path = run_dir + f"ckpt/{epoch}.pth"
             model.save_networks(ckpt_save_path)
-        if args.ngpus > 1:
+        if distributed:
             torch.distributed.barrier()
 
 

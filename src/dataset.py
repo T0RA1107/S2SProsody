@@ -47,23 +47,25 @@ class AudioDataset(Dataset):
             self.speaker_map = json.load(f)
             self.speaker_num = len(self.speaker_map)
 
-        self.target_speaker = model_config["speaker"]["target"]
-        self.all_speakers = set()
-        with open(model_config["speaker"]["all"], "r") as f:
-            for pid in f.readlines():
-                self.all_speakers.add(pid.rstrip())
-        basename_, speaker_, text_, raw_text_ = [], [], [], []
-        for i in range(len(self.text)):
-            if self.speaker[i] not in self.all_speakers:
-                continue
-            basename_.append(self.basename[i])
-            speaker_.append(self.speaker[i])
-            text_.append(self.text[i])
-            raw_text_.append(self.raw_text[i])
-        self.basename = basename_
-        self.speaker = speaker_
-        self.text = text_
-        self.raw_text = raw_text_
+        if model_config["speaker"]["all"] == "None":
+            self.all_speakers = self.speaker_map.keys()
+        else:
+            self.all_speakers = set()
+            with open(model_config["speaker"]["all"], "r") as f:
+                for pid in f.readlines():
+                    self.all_speakers.add(pid.rstrip())
+            basename_, speaker_, text_, raw_text_ = [], [], [], []
+            for i in range(len(self.text)):
+                if self.speaker[i] not in self.all_speakers:
+                    continue
+                basename_.append(self.basename[i])
+                speaker_.append(self.speaker[i])
+                text_.append(self.text[i])
+                raw_text_.append(self.raw_text[i])
+            self.basename = basename_
+            self.speaker = speaker_
+            self.text = text_
+            self.raw_text = raw_text_
 
         self.sort = sort
         self.drop_last = drop_last
@@ -109,6 +111,8 @@ class AudioDataset(Dataset):
         info_duration_mean = {}
         info_duration_std = {}
         for speaker_id in info_pitch.keys():
+            if len(info_pitch[speaker_id]) == 0:
+                print(speaker_id)
             pitch = np.concatenate(info_pitch[speaker_id])
             energy = np.concatenate(info_energy[speaker_id])
             duration = np.concatenate(info_duration[speaker_id])
@@ -284,14 +288,15 @@ class SignDataset(Dataset):
 
         if self.partial:
             partial_mp4_list = open(partial_list_path).readlines()
-            partial_id_list = [s.split("/")[-1].rstrip(".mp4\n") for s in partial_mp4_list]
+            partial_gender_list = ["male" if s[0] == "M" else "female" for s in partial_mp4_list]
+            partial_id_list = [s.split("|")[1].split("/")[-1].rstrip(".mp4\n") for s in partial_mp4_list]
             self.partial_list = partial_id_list
+            self.partial_vid2gender = { vid: g for vid, g in zip(partial_id_list, partial_gender_list) }
 
             partial_mask = data_frame.vid == ""
             for vid in partial_id_list:
                 partial_mask |= data_frame.vid == vid
         else:
-            # select by split ["train", "valid"]
             data_frame = data_frame.loc[data_frame["split"].str.contains(split)]
 
         def filter_missing_or_short(row):
