@@ -24,17 +24,17 @@ def pad_2D(inputs, maxlen=None):
 
 
 class AudioPool():
-    """This class implements an image buffer that stores previously generated audios.
+    """This class implements an audio buffer that stores previously generated audios.
 
     This buffer enables us to update discriminators using a history of generated audios
     rather than the ones produced by the latest generators.
     """
 
     def __init__(self, pool_size):
-        """Initialize the ImagePool class
+        """Initialize the AudioPool class
 
         Parameters:
-            pool_size (int) -- the size of image buffer, if pool_size=0, no buffer will be created
+            pool_size (int) -- the size of audio buffer, if pool_size=0, no buffer will be created
         """
         self.pool_size = pool_size
         if self.pool_size > 0:  # create an empty pool
@@ -43,7 +43,7 @@ class AudioPool():
             self.audio_lens = []
 
     def query(self, audios, audio_lens):
-        """Return an image from the pool.
+        """Return an audio from the pool.
 
         Parameters:
             audios: the latest generated audios from the generator
@@ -69,7 +69,7 @@ class AudioPool():
                 return_audio_lens.append(audio_len)
             else:
                 p = random.uniform(0, 1)
-                if p > 0.5:  # by 50% chance, the buffer will return a previously stored image, and insert the current image into the buffer
+                if p > 0.5:  # by 50% chance, the buffer will return a previously stored audio, and insert the current audio into the buffer
                     random_id = random.randint(0, self.pool_size - 1)  # randint is inclusive
                     tmp_audio = self.audios[random_id].clone()
                     tmp_audio_len = self.audio_lens[random_id].clone()
@@ -77,7 +77,7 @@ class AudioPool():
                     self.audio_lens[random_id] = audio_len
                     return_audios.append(tmp_audio)
                     return_audio_lens.append(tmp_audio_len)
-                else:       # by another 50% chance, the buffer will return the current image
+                else:       # by another 50% chance, the buffer will return the current audio
                     return_audios.append(audio)
                     return_audio_lens.append(audio_len)
         # return_audios = torch.cat(return_audios, 0)   # collect all the audios and return

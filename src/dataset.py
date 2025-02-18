@@ -258,7 +258,7 @@ class AudioDataset(Dataset):
 
 
 class SignDataset(Dataset):
-    def __init__(self, args, preprocess_config, train_config,
+    def __init__(self, preprocess_config, train_config, local_rank,
                  phase="train", split="train", partial_list_path=None, sort=False, drop_last=False):
         self.sort = sort
         self.drop_last = drop_last
@@ -275,7 +275,7 @@ class SignDataset(Dataset):
         self.label_path = preprocess_config["preprocessing_sign"]["label_path"]
         assert self.feat_path is not None and self.feat_path is not None
 
-        self.local_rank = args.local_rank
+        self.local_rank = local_rank
         self.eos_token = preprocess_config["preprocessing_sign"]["eos_token"]
         # information about input clips (features)
         self.visual_token_num = preprocess_config["preprocessing_sign"]["clip_length"]
@@ -401,7 +401,8 @@ class SignDataset(Dataset):
             sign = self.__getitem__(i)
             prosody_labels.append(sign.prosody_label[None,])
         prosody_labels = np.concatenate(prosody_labels)
-        prosody_dist = prosody_labels.sum(axis=0) / prosody_labels.sum()
+        prosody_dist = prosody_labels.sum(axis=0) / len(self.vid2idx)
+        assert np.all(np.abs(prosody_dist.sum(axis=1) - 1.) <= 1e-8)
 
         n, bins = prosody_dist.shape
         x = np.arange(0, bins) / bins + 1 / (2 * bins)
@@ -660,9 +661,9 @@ class SignDataset(Dataset):
 class UnpairedAudioSignDataset(Dataset):
 
     def __init__(self, filename, preprocess_config, train_config, model_config,
-                 args, phase="train", split="train", partial_list_path=None):
+                 local_rank, phase="train", split="train", partial_list_path=None):
         self.audio_dataset = AudioDataset(filename, preprocess_config, train_config, model_config)
-        self.sign_dataset = SignDataset(args, preprocess_config, train_config, phase, split, partial_list_path)
+        self.sign_dataset = SignDataset(preprocess_config, train_config, local_rank, phase, split, partial_list_path)
 
         self.audio_size = len(self.audio_dataset)
         self.sign_size = len(self.sign_dataset)

@@ -1,10 +1,6 @@
 import torch
-import torch.nn as nn
 import os
-import re
 from collections import OrderedDict, namedtuple
-import itertools
-import numpy as np
 import json
 import random
 
@@ -12,9 +8,7 @@ from util.audio_pool import AudioPool
 from . import networks
 from .loss import ProsodyReconstructionLoss, ProsodyGuidedRegularizationLoss
 from .sign2audio import Sign2Speech
-from .prosody_estimator import ProsodyEstimator1D, ProsodyEstimator2D, ProsodyDistEstimator1D
-
-from FastSpeech2.model.loss import FastSpeech2Loss
+from .prosody_estimator import ProsodyDistEstimator1D
 
 
 TrainOutput = namedtuple("TrainOutput", "mels lens src_masks mel_masks p_predictions e_predictions d_rounded sign_prosody_predictions")
