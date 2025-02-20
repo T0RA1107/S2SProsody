@@ -11,7 +11,10 @@ from .sign2audio import Sign2Speech
 from .prosody_estimator import ProsodyDistEstimator1D
 
 
-TrainOutput = namedtuple("TrainOutput", "mels src_lens mel_lens src_masks mel_masks p_predictions e_predictions log_d_predictions d_rounded sign_prosody_predictions")
+TrainOutput = namedtuple("TrainOutput",
+                         "mels src_lens mel_lens src_masks mel_masks\
+                         p_predictions e_predictions log_d_predictions d_rounded\
+                         sign_prosody_predictions")
 
 InferenceOutput = namedtuple("InferenceOutput", "mels mel_lens p_predictions e_predictions d_rounded")
 
@@ -577,7 +580,7 @@ class SemiCycleGANModel(BaseModel):
             ], dim=1)
             sign_prosody_predictions = self.netProsody_estimator(prosody_predictions)
             output_w_sign = TrainOutput(
-                audio, audio_lens, pred.src_masks, pred.mel_masks,
+                audio, sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
                 pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
                 sign_prosody_predictions)
 
@@ -661,6 +664,6 @@ class SemiCycleGANModel(BaseModel):
             self.optimizer_D.step()  # update D_A and D_B's weights
         self.step = (self.step + 1) % 2
         loss_log.update(self.loss_log_D)
-        print(loss_log)
+        # print(loss_log)
         torch.cuda.empty_cache()
         return loss_log
