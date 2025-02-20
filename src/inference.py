@@ -28,9 +28,10 @@ def main(args, configs, configs_ft):
     preprocess_config, model_config, train_config = configs
 
     audio_dataset = AudioDataset(
-        "train.txt", preprocess_config, train_config, model_config, args)  # to get speaker info from audio train dataset
-    valid_dataset = SignDataset(
-        args, preprocess_config, train_config, partial_list_path="./valid_list.txt"
+        "train.txt", preprocess_config, train_config, model_config)  # to get speaker info from audio train dataset
+    inference_dataset = SignDataset(
+        preprocess_config, train_config, args.local_rank,
+        phase="test", split="val", partial_list_path=". inference_list.txt"
     )
     speaker_info = audio_dataset.get_speaker_info()
     with open(
@@ -44,11 +45,11 @@ def main(args, configs, configs_ft):
         model_config["speaker_num"] = audio_dataset.speaker_num
     batch_size = train_config["optimizer"]["batch_size"]
     group_size = 4
-    valid_loader = DataLoader(
-        valid_dataset,
+    inference_loader = DataLoader(
+        inference_dataset,
         batch_size=batch_size * group_size,
         shuffle=False,
-        collate_fn=valid_dataset.collate_fn,
+        collate_fn=inference_dataset.collate_fn,
         num_workers=8,
         pin_memory=True
     )
@@ -71,7 +72,7 @@ def main(args, configs, configs_ft):
 
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
 
-    save_inference(model, vocoder, valid_loader, sampling_rate, stats, wav_dir, -1, model_config, preprocess_config)
+    save_inference(model, vocoder,  inference_loader, sampling_rate, stats, wav_dir, -1, model_config, preprocess_config)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -99,7 +99,7 @@ def save_inference(model: SemiCycleGANModel, vocoder, data_loader, local_rank, s
             bs = output_wo_sign.mels.shape[0]
             for i in range(bs):
                 # without sign
-                mel_len_wo_sign = output_wo_sign.lens[i]
+                mel_len_wo_sign = output_wo_sign.mel_lens[i]
                 mel_prediction_wo_sign = output_wo_sign.mels[i, :, :mel_len_wo_sign].detach().transpose(1, 2)
                 wav_prediction = vocoder_infer(
                     mel_prediction_wo_sign,
@@ -115,7 +115,7 @@ def save_inference(model: SemiCycleGANModel, vocoder, data_loader, local_rank, s
                     expand(output_wo_sign.e_predictions[i], duration)),
                     stats, os.path.join(save_mel_dir, f"wo|{batch.raw_texts[i]}.png"))
                 # with sign
-                mel_len_w_sign = output_w_sign.lens[i]
+                mel_len_w_sign = output_w_sign.mel_lens[i]
                 mel_prediction_w_sign = output_w_sign.mels[i, :, :mel_len_w_sign].detach().transpose(1, 2)
                 wav_prediction = vocoder_infer(
                     mel_prediction_w_sign,

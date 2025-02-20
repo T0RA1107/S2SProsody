@@ -149,9 +149,6 @@ class Sign2Speech(FastSpeech2):
         output = self.mel_linear(output)
 
         postnet_output = self.postnet(output) + output
-        output = F.pad(output, (0, 0, 0, self.max_seq_len - output.shape[1]))
-        postnet_output = F.pad(postnet_output, (0, 0, 0, self.max_seq_len - postnet_output.shape[1]))
-        mel_masks = F.pad(mel_masks, (0, self.max_seq_len - mel_masks.shape[1]), value=True)
 
         return SpeechPrediction(
             output,

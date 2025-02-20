@@ -18,7 +18,7 @@ class Identity(nn.Module):
         return x
 
 
-def get_norm_layer(norm_type='instance'):
+def get_norm_layer(norm_type='instance', dim=2):
     """Return a normalization layer
 
     Parameters:
@@ -28,9 +28,9 @@ def get_norm_layer(norm_type='instance'):
     For InstanceNorm, we do not use learnable affine parameters. We do not track running statistics.
     """
     if norm_type == 'batch':
-        norm_layer = functools.partial(nn.BatchNorm2d, affine=True, track_running_stats=True)
+        norm_layer = functools.partial(eval(f"nn.BatchNorm{dim}d"), affine=True, track_running_stats=True)
     elif norm_type == 'instance':
-        norm_layer = functools.partial(nn.InstanceNorm2d, affine=False, track_running_stats=False)
+        norm_layer = functools.partial(eval(f"nn.InstanceNorm{dim}d"), affine=False, track_running_stats=False)
     elif norm_type == 'none':
         def norm_layer(x):
             return Identity()
@@ -143,26 +143,14 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', init_type='normal'
 
     Returns a discriminator
 
-    Our current implementation provides three types of discriminators:
-        [basic]: 'PatchGAN' classifier described in the original pix2pix paper.
-        It can classify whether 70×70 overlapping patches are real or fake.
-        Such a patch-level discriminator architecture has fewer parameters
-        than a full-image discriminator and can work on arbitrarily-sized images
-        in a fully convolutional fashion.
-
-        [n_layers]: With this mode, you can specify the number of conv layers in the discriminator
-        with the parameter <n_layers_D> (default=3 as used in [basic] (PatchGAN).)
-
-        [pixel]: 1x1 PixelGAN discriminator can classify whether a pixel is real or not.
-        It encourages greater color diversity but has no effect on spatial statistics.
-
     The discriminator has been initialized by <init_net>. It uses Leakly RELU for non-linearity.
     """
     net = None
-    norm_layer = get_norm_layer(norm_type=norm)
 
     if netD == 'audio':
-        net = AudioDiscriminator(input_nc, ndf, norm_layer=norm_layer)
+        net = AudioDiscriminator(input_nc, ndf, norm_layer=get_norm_layer(norm_type=norm, dim=2))
+    elif netD == "audio_prosody":
+        net = AudioProsodyDiscriminator(input_nc, ndf, norm_layer=get_norm_layer(norm_type=norm, dim=1))
     else:
         raise NotImplementedError('Discriminator model name [%s] is not recognized' % netD)
     return init_net(net, args, distributed, init_type, init_gain, gpu_ids)
@@ -393,7 +381,7 @@ class AudioDiscriminator(nn.Module):
 
 
 class AudioProsodyDiscriminator(nn.Module):
-    def __init__(self, input_nc, n_dist, ndf=64, n_layers=3, norm_layer=nn.BatchNorm1d):
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm1d):
         """ AudioProsodyDiscriminator
 
         Parameters:
@@ -403,22 +391,21 @@ class AudioProsodyDiscriminator(nn.Module):
             norm_layer      -- normalization layer
         """
         super(AudioProsodyDiscriminator, self).__init__()
-        self.n_dist = n_dist
         if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
             use_bias = norm_layer.func == nn.InstanceNorm1d
         else:
             use_bias = norm_layer == nn.InstanceNorm1d
 
-        kw = 4
+        kw = 3
         padw = 1
-        sequence = [nn.Conv1d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
+        sequence = [nn.Conv1d(input_nc, ndf, kernel_size=kw, stride=1, padding=padw), nn.LeakyReLU(0.2, True)]
         nf_mult = 1
         nf_mult_prev = 1
         for n in range(1, n_layers):  # gradually increase the number of filters
             nf_mult_prev = nf_mult
             nf_mult = min(2 ** n, 8)
             sequence += [
-                nn.Conv1d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
+                nn.Conv1d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
                 norm_layer(ndf * nf_mult),
                 nn.LeakyReLU(0.2, True)
             ]
@@ -433,14 +420,14 @@ class AudioProsodyDiscriminator(nn.Module):
 
         sequence += [
             nn.Conv1d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw),
-            nn.AdaptiveMaxPool1d(1)
+            nn.AdaptiveAvgPool1d(1)
             ]
         self.model = nn.Sequential(*sequence)
 
     def forward(self, input):
         """Standard forward."""
         output = self.model(input)
-        return
+        return output.reshape(-1)
 
 
 class TextConditionalDiscriminator(nn.Module):

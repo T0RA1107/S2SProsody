@@ -5,19 +5,22 @@ import torch.nn.functional as F
 def pad_2D(inputs, maxlen=None):
     def pad(x, max_len):
         PAD = 0
-        if x.shape[0] > max_len:
+        if x.shape[1] > max_len:
             raise ValueError("not max_len")
-
-        s = x.shape[1]
+        if x.dim() == 3:
+            x = x.transpose(1, 2)
         x_padded = F.pad(
-            x.transpose(0, 1), (0, max_len - x.shape[0]), mode="constant", value=PAD
-        ).transpose(0, 1)
-        return x_padded[:, :s]
+            x, (0, max_len - x.shape[-1]), mode="constant", value=PAD
+        )
+        if x.dim() == 3:
+            x_padded = x_padded.transpose(1, 2)
+        assert x.shape[0] == x_padded.shape[0] and (x.shape[2] == x_padded.shape[2] if x.dim == 3 else True)
+        return x_padded
 
     if maxlen:
         output = torch.stack([pad(x, maxlen) for x in inputs])
     else:
-        max_len = max(x.shape[0] for x in inputs)
+        max_len = max(x.shape[1] for x in inputs)
         output = torch.stack([pad(x, max_len) for x in inputs])
 
     return output
@@ -59,8 +62,8 @@ class AudioPool():
         return_audios = []
         return_audio_lens = []
         for audio, audio_len in zip(audios, audio_lens):
-            audio = torch.squeeze(audio, 0)
-            audio_len = torch.squeeze(audio_len, 0)
+            audio = torch.squeeze(audio, 0)  # (C, L, ...)
+            audio_len = torch.squeeze(audio_len, 0)  # (1,)
             if self.num_audios < self.pool_size:   # if the buffer is not full; keep inserting current audios to the buffer
                 self.num_audios = self.num_audios + 1
                 self.audios.append(audio)
@@ -81,5 +84,5 @@ class AudioPool():
                     return_audios.append(audio)
                     return_audio_lens.append(audio_len)
         # return_audios = torch.cat(return_audios, 0)   # collect all the audios and return
-        return_audios = pad_2D(return_audios)
+        return_audios = pad_2D(return_audios)  # [(C, L_i, ...) for _ in range(B)] -> (B, C, L_max, ...)
         return return_audios, return_audio_lens

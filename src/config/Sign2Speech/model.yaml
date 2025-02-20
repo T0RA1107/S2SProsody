@@ -39,13 +39,13 @@ s2sMixer:
   max_seq_len: 1000
 
 D_audio:
-  input_nc: 1
   ndf: 64
   netD: basic
   n_layers_D: 3
   norm: batch
   init_type: normal
   init_gain: 0.02
+  prosody_discriminator: True
 
 
 multi_speaker: True
