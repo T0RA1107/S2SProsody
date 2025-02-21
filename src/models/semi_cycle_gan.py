@@ -487,7 +487,7 @@ class SemiCycleGANModel(BaseModel):
             real = self.real_audio.mels.unsqueeze(1).float().to(self.device, non_blocking=True)
             real_lens = self.real_audio.mel_lens
 
-        clip_length = min(min(fake_lens), min(real_lens))
+        clip_length = min(min(fake_lens), min(real_lens)) + 8
         fake = random_clip_batch(fake, fake_lens, clip_length)
         real = random_clip_batch(real, real_lens, clip_length)
         # input_len = 100  # constant length for now
@@ -510,11 +510,11 @@ class SemiCycleGANModel(BaseModel):
                 output_w_sign.e_predictions.unsqueeze(1),
                 output_w_sign.log_d_predictions.unsqueeze(1)
             ], dim=1)
-            clip_length = output_w_sign.src_lens.min()
+            clip_length = output_w_sign.src_lens.min() + 8
             fake = random_clip_batch(fake, output_w_sign.src_lens, clip_length)
         else:
             fake = output_w_sign.mels
-            clip_length = output_w_sign.mel_lens.min()
+            clip_length = output_w_sign.mel_lens.min() + 8
             fake = random_clip_batch(fake, output_w_sign.mel_lens, clip_length)
         pred_fake = self.netD_audio(fake)
         loss_G_audio = self.criterionGAN(pred_fake, True)
