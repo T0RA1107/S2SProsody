@@ -16,7 +16,8 @@ TrainOutput = namedtuple("TrainOutput",
                          p_predictions e_predictions log_d_predictions d_rounded\
                          sign_prosody_predictions")
 
-InferenceOutput = namedtuple("InferenceOutput", "mels mel_lens p_predictions e_predictions d_rounded")
+InferenceOutput = namedtuple("InferenceOutput",
+                             "mels src_lens mel_lens p_predictions e_predictions d_rounded sign_prosody_predictions")
 
 
 def make_mask_from_lens(length, max_length=None):
@@ -604,7 +605,7 @@ class SemiCycleGANModel(BaseModel):
         torch.cuda.empty_cache()
         return loss_log
 
-    def inference(self, sign, vid2gender):
+    def inference(self, sign, vid2gender, estimateProsody=False):
         token_length = sign.token_length.to(self.device, non_blocking=True)
         max_src_len = token_length.max().to(self.device, non_blocking=True)
         text_tokens = sign.text_tokens[:, :max_src_len].to(self.device, non_blocking=True)
@@ -625,7 +626,21 @@ class SemiCycleGANModel(BaseModel):
                 pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
 
             audio_wo_sign_lens = pred.mel_lens.detach().cpu()
-            output_wo_sign = InferenceOutput(audio_wo_sign, audio_wo_sign_lens, pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy())
+            
+            pred_prosody_label = None
+            if estimateProsody:
+                prosody_predictions = torch.cat([
+                    pred.p_predictions.unsqueeze(1),
+                    pred.e_predictions.unsqueeze(1),
+                    pred.log_d_predictions.unsqueeze(1)
+                ], dim=1)
+                pred_prosody_label = self.netProsody_estimator(prosody_predictions)
+                pred_prosody_label = F.softmax(pred_prosody_label, dim=-1).cpu().numpy()
+            
+            output_wo_sign = InferenceOutput(
+                audio_wo_sign, sign.token_length.numpy(), audio_wo_sign_lens,
+                pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy(),
+                pred_prosody_label)
 
             # with sign language TTS
             pred = self.netG_sign2audio(
@@ -639,10 +654,24 @@ class SemiCycleGANModel(BaseModel):
             audio_w_sign = pred.postnet_output.masked_fill(
                 pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
             audio_w_sign_lens = pred.mel_lens
-            output_w_sign = InferenceOutput(audio_w_sign, audio_w_sign_lens, pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy())
+            
+            pred_prosody_label = None
+            if estimateProsody:
+                prosody_predictions = torch.cat([
+                    pred.p_predictions.unsqueeze(1),
+                    pred.e_predictions.unsqueeze(1),
+                    pred.log_d_predictions.unsqueeze(1)
+                ], dim=1)
+                pred_prosody_label = self.netProsody_estimator(prosody_predictions)
+                pred_prosody_label = F.softmax(pred_prosody_label, dim=-1).cpu().numpy()
+
+            output_w_sign = InferenceOutput(
+                audio_w_sign, sign.token_length.numpy(), audio_w_sign_lens,
+                pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy(),
+                pred_prosody_label)
 
         torch.cuda.empty_cache()
-        return output_wo_sign, output_w_sign
+        return output_wo_sign, output_w_sign, speakers.cpu().numpy()
 
     def optimize_parameters(self):
         """Calculate losses, gradients, and update network weights; called in every training iteration"""

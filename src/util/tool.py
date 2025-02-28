@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 from FastSpeech2.utils.model import vocoder_infer
 
-from models.semi_cycle_gan import SemiCycleGANModel
+from models.semi_cycle_gan import SemiCycleGANModel, InferenceOutput
 
 
 def init_random_seeds(random_seed=0, rank=0):
@@ -32,6 +32,36 @@ def expand(values, durations):
     for value, d in zip(values, durations):
         out += [value] * max(0, int(d))
     return np.array(out)
+
+
+def make_mask_from_length(length, maxlen):
+    idx = np.arange(maxlen).reshape(1, -1).repeat(length.shape[0], axis=0)
+    mask = idx < length.reshape(-1, 1)
+    return mask
+
+
+def calc_normed_params(output_w_sign: InferenceOutput, speaker_info, speakers):
+    energy_mean_info = np.array([speaker_info["energy"]["mean"][i] for i in speakers])
+    energy_std_info  = np.array([speaker_info["energy"]["std"][i] for i in speakers])
+    pitch_mean_info  = np.array([speaker_info["pitch"]["mean"][i] for i in speakers])
+    pitch_std_info   = np.array([speaker_info["pitch"]["std"][i] for i in speakers])
+
+    L = output_w_sign.e_predictions.shape[1]
+    src_mask = make_mask_from_length(output_w_sign.src_lens, L)
+    energy_mean_info = energy_mean_info[:, None].repeat(L, axis=1)
+    energy_std_info = energy_std_info[:, None].repeat(L, axis=1)
+    norm_energy = (output_w_sign.e_predictions - energy_mean_info) / (energy_std_info + 1e-5)
+    norm_energy = norm_energy * src_mask
+    energy_mean = norm_energy.sum(axis=1) / output_w_sign.src_lens
+    # energy_var = (norm_energy ** 2).sum(axis=1) / token_length - energy_mean ** 2
+
+    pitch_mean_info = pitch_mean_info[:, None].repeat(L, axis=1)
+    pitch_std_info = pitch_std_info[:, None].repeat(L, axis=1)
+    norm_pitch = (output_w_sign.p_predictions - pitch_mean_info) / (pitch_std_info + 1e-5)
+    norm_pitch = norm_pitch * src_mask
+    pitch_mean = norm_pitch.sum(axis=1) / output_w_sign.src_lens
+    # pitch_var = (norm_pitch ** 2).sum(axis=1) / token_length - pitch_mean ** 2
+    return energy_mean, pitch_mean
 
 
 def plot_mel(data, stats, name):
@@ -78,24 +108,55 @@ def plot_mel(data, stats, name):
         right=True,
         labelright=True,
     )
-    fig.savefig(name)
+    fig.savefig(f"{name}.png")
     plt.close()
+
+
+def plot_sign_prosody_dist(sign_prosody_label, sign_prosody_predictions, energy_mean, pitch_mean, save_dir, name):
+    label_type = ["v_hand", "v_face", "a_hand", "a_face"]
+    n = sign_prosody_label.shape[-1]
+    bins = np.linspace(0, 1, n + 1)
+    x = (bins[:-1] + bins[1:]) / 2.
+    mean_GT = (x * sign_prosody_label).sum(1)
+    mean_pred = (x * sign_prosody_predictions).sum(1)
+    assert np.all(np.abs(sign_prosody_predictions.sum(1) - 1) <= 1e-5), f"{sign_prosody_predictions.shape}, {sign_prosody_predictions.sum(1)}"
+    
+    for i, label in enumerate(label_type):
+        fig = plt.figure()
+        
+        plt.bar(x=x, height=sign_prosody_label[i], width=1 / n,
+                color="red", alpha=0.5, label="GT")
+        plt.bar(x=x, height=sign_prosody_predictions[i], width=1 / n,
+                color="blue", alpha=0.5, label="Prediction")
+        plt.axvline(x=mean_GT[i], color="red", linestyle="-", label="mean (GT)")
+        plt.axvline(x=mean_pred[i], color="blue", linestyle="--", label="mean (Prediction)")
+        if label == "v_hand":
+            plt.axvline(x=energy_mean, color="green", linestyle=":", label="Energy mean")
+        if label == "v_face":
+            plt.axvline(x=pitch_mean, color="green", linestyle=":", label="Pitch mean")
+        plt.legend()
+        fig.savefig(os.path.join(save_dir, f"{label}|{name}.png"))
+        plt.close()
 
 
 def save_inference(model: SemiCycleGANModel, vocoder, data_loader, local_rank, sampling_rate, stats, output_dir, epoch, model_config, preprocess_config, vid2gender):
     model.set_eval_mode()
     save_wav_dir = os.path.join(output_dir, "wavs", str(epoch))
+    save_dist_dir = os.path.join(output_dir, "dists", str(epoch))
     save_mel_dir = os.path.join(output_dir, "mels", str(epoch))
     save_metadata_dir = os.path.join(output_dir, "metadata")
     os.makedirs(save_wav_dir, exist_ok=True)
     os.makedirs(save_mel_dir, exist_ok=True)
+    os.makedirs(save_dist_dir, exist_ok=True)
     os.makedirs(save_metadata_dir, exist_ok=True)
     name_list = []
     text_list = []
     l2_list = []
+    sign_info = model.sign_info
     for batchs in data_loader:
         for batch in batchs:
-            output_wo_sign, output_w_sign = model.inference(batch, vid2gender)
+            output_wo_sign, output_w_sign, speakers = model.inference(batch, vid2gender, estimateProsody=True)
+            energy_mean, pitch_mean = calc_normed_params(output_w_sign, model.speaker_info, speakers)
             bs = output_wo_sign.mels.shape[0]
             for i in range(bs):
                 # without sign
@@ -113,7 +174,7 @@ def save_inference(model: SemiCycleGANModel, vocoder, data_loader, local_rank, s
                     mel_prediction_wo_sign.squeeze(0).cpu().numpy(),
                     expand(output_wo_sign.p_predictions[i], duration),
                     expand(output_wo_sign.e_predictions[i], duration)),
-                    stats, os.path.join(save_mel_dir, f"wo|{batch.raw_texts[i]}.png"))
+                    stats, os.path.join(save_mel_dir, f"wo|{batch.raw_texts[i]}"))
                 # with sign
                 mel_len_w_sign = output_w_sign.mel_lens[i]
                 mel_prediction_w_sign = output_w_sign.mels[i, :, :mel_len_w_sign].detach().transpose(1, 2)
@@ -129,7 +190,11 @@ def save_inference(model: SemiCycleGANModel, vocoder, data_loader, local_rank, s
                     mel_prediction_w_sign.squeeze(0).cpu().numpy(),
                     expand(output_w_sign.p_predictions[i], duration),
                     expand(output_w_sign.e_predictions[i], duration)),
-                    stats, os.path.join(save_mel_dir, f"w|{batch.raw_texts[i]}.png"))
+                    stats, os.path.join(save_mel_dir, f"w|{batch.raw_texts[i]}"))
+                plot_sign_prosody_dist(
+                    batch.prosody_label[i].numpy(), output_w_sign.sign_prosody_predictions[i],
+                    energy_mean[i] * sign_info["std"][0] + sign_info["mean"][0], pitch_mean[i] * sign_info["std"][1] + sign_info["mean"][1],
+                    save_dist_dir, f"{batch.raw_texts[i]}")
                 # add metadata
                 name_list.append(batch.video_names[i])
                 text_list.append(batch.raw_texts[i])
