@@ -48,16 +48,22 @@ class EarthMoversDistanceLoss(nn.Module):
 
 
 class ProsodyReconstructionLoss(nn.Module):
-    def __init__(self):
+    def __init__(self, dist_loss_type="CELoss"):
         super().__init__()
-        self.distribution_loss = EarthMoversDistanceLoss(reduction="none")
+        if dist_loss_type == "CELoss":
+            self.distribution_loss = nn.CrossEntropyLoss(reduction="none")
+        elif dist_loss_type == "EMDLoss":
+            self.distribution_loss = EarthMoversDistanceLoss(reduction="none")
+        else:
+            raise NotImplementedError()
 
     def forward(self, pred_prosody_label, prosody_label):
         loss_log = {}
+        batch_size = pred_prosody_label.shape[0]
         pred_prosody_label = rearrange(pred_prosody_label, "b c d -> (b c) d")
         prosody_label = rearrange(prosody_label, "b c d -> (b c) d")
         loss_prosody = self.distribution_loss(pred_prosody_label, prosody_label)
-        loss_prosody = rearrange(loss_prosody, "(b c) -> b c", c=4).sum(0)
+        loss_prosody = rearrange(loss_prosody, "(b c) -> b c", c=4).sum(0) / batch_size
 
         loss_prosody_total = sum(loss_prosody) / 4.
         loss_log["prosody loss/total"] = loss_prosody_total.detach().cpu()

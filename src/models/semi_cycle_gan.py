@@ -344,7 +344,7 @@ class SemiCycleGANModel(BaseModel):
             # define loss functions
             self.criterionGAN = networks.GANLoss(train_config["GAN"]["gan_mode"]).to(self.device, non_blocking=True)  # define GAN loss.
             # self.criterionProsody = nn.MSELoss(reduction="none").to(self.device, non_blocking=True)
-            self.criterionPR = ProsodyReconstructionLoss().to(self.device, non_blocking=True)
+            self.criterionPR = ProsodyReconstructionLoss(train_config["loss"]["prosody"]["dist_loss_type"]).to(self.device, non_blocking=True)
             self.criterionRGR = ProsodyGuidedRegularizationLoss(sign_info, speaker_info, margin=train_config["loss"]["PGR"]["margin"]).to(self.device, non_blocking=True)
             # train_parameters = list(self.netG_sign2audio.parameters())
             train_parameters = []

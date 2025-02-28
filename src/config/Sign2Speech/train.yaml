@@ -23,6 +23,7 @@ loss:
   prosody:
     dist: True
     bins: 32
+    dist_loss_type: CELoss
   weight:
     prosody: 1
     regdist_mean: 0.1
