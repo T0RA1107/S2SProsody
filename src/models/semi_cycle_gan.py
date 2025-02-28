@@ -1,4 +1,6 @@
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import os
 from collections import OrderedDict, namedtuple
 import json
@@ -31,10 +33,11 @@ def make_mask_from_lens(length, max_length=None):
 
 def random_clip_batch(inputs: torch.Tensor, lengths: torch.Tensor, clip_length: int) -> torch.Tensor:
     # inputs: (B, C, L, ...)
+    L = inputs.shape[2]
 
     clips = []
     for i in range(inputs.shape[0]):
-        true_length = lengths[i].item()
+        true_length = min(L, lengths[i].item())
         if true_length - clip_length > 0:
             start = torch.randint(0, true_length - clip_length + 1, (1,)).item()
         else:
@@ -310,10 +313,7 @@ class SemiCycleGANModel(BaseModel):
         with open(os.path.join(preprocess_config["path"]["preprocessed_path"], "speakers.json")) as f:
             self.speaker_map = json.load(f)
         self.target_speakers = model_config["speaker"]["target"]
-        self.all_speakers = []
-        with open(model_config["speaker"]["all"], "r") as f:
-            for pid in f.readlines():
-                self.all_speakers.append(self.speaker_map[pid.rstrip()])
+        self.all_speakers = list(speaker_info["energy"]["mean"].keys())
 
         self.step = 0
 
@@ -354,14 +354,17 @@ class SemiCycleGANModel(BaseModel):
                     train_parameters.append(param)
             train_parameters += list(self.netProsody_estimator.parameters())
 
-            self.optimizer_G = torch.optim.Adam(train_parameters,
+            self.optimizer_G = torch.optim.AdamW(train_parameters,
                                                 lr=train_config["optimizer"]["lr_G_s2a"],
-                                                betas=train_config["optimizer"]["betas"])
+                                                betas=train_config["optimizer"]["betas"],
+                                                weight_decay=train_config["optimizer"]["weight_decay"])
             self.optimizer_D = torch.optim.SGD(self.netD_audio.parameters(),
                                                 lr=train_config["optimizer"]["lr_D_a"],
-                                                momentum=0.9)
+                                                momentum=0.9,
+                                                weight_decay=train_config["optimizer"]["weight_decay"])
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
+            self.grad_clip_thresh = train_config["optimizer"]["grad_clip_thresh"]
 
     def set_input(self, inputs):
         """Unpack input data from the dataloader and perform necessary pre-processing steps.
@@ -511,11 +514,11 @@ class SemiCycleGANModel(BaseModel):
                 output_w_sign.e_predictions.unsqueeze(1),
                 output_w_sign.log_d_predictions.unsqueeze(1)
             ], dim=1)
-            clip_length = output_w_sign.src_lens.min() + 8
+            clip_length = output_w_sign.src_lens.min().detach().cpu() + 8
             fake = random_clip_batch(fake, output_w_sign.src_lens, clip_length)
         else:
             fake = output_w_sign.mels
-            clip_length = output_w_sign.mel_lens.min() + 8
+            clip_length = output_w_sign.mel_lens.min().detach().cpu() + 8
             fake = random_clip_batch(fake, output_w_sign.mel_lens, clip_length)
         pred_fake = self.netD_audio(fake)
         loss_G_audio = self.criterionGAN(pred_fake, True)
@@ -586,7 +589,20 @@ class SemiCycleGANModel(BaseModel):
                 sign_prosody_predictions)
 
             # GAN Loss
-            pred_fake = self.netD_audio(audio)
+            if self.prosody_discriminator:
+                fake = torch.cat([
+                    output_w_sign.p_predictions.unsqueeze(1),
+                    output_w_sign.e_predictions.unsqueeze(1),
+                    output_w_sign.log_d_predictions.unsqueeze(1)
+                ], dim=1)
+                clip_length = output_w_sign.src_lens.min().detach().cpu() + 8
+                fake = random_clip_batch(fake, output_w_sign.src_lens, clip_length)
+            else:
+                fake = output_w_sign.mels
+                clip_length = output_w_sign.mel_lens.min().detach().cpu() + 8
+                fake = random_clip_batch(fake, output_w_sign.mel_lens, clip_length)
+
+            pred_fake = self.netD_audio(fake)
             loss_G_audio = self.criterionGAN(pred_fake, True)
             loss_log["GAN loss/G (valid)"] = loss_G_audio.detach().cpu()
 
@@ -684,15 +700,20 @@ class SemiCycleGANModel(BaseModel):
         self.optimizer_G.zero_grad(set_to_none=True)  # set G's gradients to zero
         loss_log_G = self.backward_G(output_wo_sign, output_w_sign, speakers)             # calculate gradients for G
         loss_log.update(loss_log_G)
+        # G's optimizing
+        nn.utils.clip_grad_norm_(self.netG_sign2audio.parameters(), self.grad_clip_thresh)
+        nn.utils.clip_grad_norm_(self.netProsody_estimator.parameters(), self.grad_clip_thresh)
         self.optimizer_G.step()       # update G's weights
         if self.step == 0:
             # D_A and D_B
             self.set_requires_grad([self.netD_audio], True)
             self.optimizer_D.zero_grad(set_to_none=True)   # set D's gradients to zero
             self.loss_log_D = self.backward_D_audio(output_w_sign)      # calculate gradients for D_audio
+            nn.utils.clip_grad_norm_(self.netD_audio.parameters(), self.grad_clip_thresh)
             self.optimizer_D.step()  # update D_A and D_B's weights
         self.step = (self.step + 1) % 2
         loss_log.update(self.loss_log_D)
-        # print(loss_log)
+        # if self.local_rank == 0:
+        #     print(loss_log)
         torch.cuda.empty_cache()
         return loss_log

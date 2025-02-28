@@ -1,4 +1,6 @@
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import functools
 
 
@@ -160,6 +162,6 @@ class ProsodyDistEstimator1D(nn.Module):
     def forward(self, input):
         """Standard forward."""
         output = self.model(input)
-        dist_preds = [self.task_heads[i](output).squeeze() for i in range(self.n_dist)]
+        dist_preds = torch.stack([self.task_heads[i](output).squeeze() for i in range(self.n_dist)]).transpose(0, 1)
         return dist_preds
 

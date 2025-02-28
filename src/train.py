@@ -141,17 +141,12 @@ def main(args, configs, configs_ft):
         )
 
     total_iters = 0
-    grad_clip_thresh = train_config["optimizer"]["grad_clip_thresh"]
     total_step = train_config["step"]["total_step"]
     n_epochs_decay = train_config["step"]["n_epochs_decay"]
     step_count = train_config["step"]["step_count"]
     log_step = train_config["step"]["log_step"]
     save_epochs = train_config["step"]["save_epochs"]
-    synth_step = train_config["step"]["synth_step"]
-    val_step = train_config["step"]["val_step"]
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
-    assert synth_step % log_step == 0
-    assert val_step % log_step == 0
 
     if args.local_rank == 0:
         progress = tqdm(total=len(range(step_count, total_step + n_epochs_decay)), desc="Training")

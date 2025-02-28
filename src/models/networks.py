@@ -339,34 +339,29 @@ class AudioDiscriminator(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
 
         self.n_layers = n_layers
-        kw = 4
-        padw = 1
         sequence = [
-            nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw),
+            nn.Conv2d(input_nc, ndf, kernel_size=(4, 3), stride=(2, 1), padding=1),
             nn.LeakyReLU(0.2, True),
-            nn.Dropout2d()]
+        ]
         nf_mult = 1
         nf_mult_prev = 1
         for n in range(1, n_layers):  # gradually increase the number of filters
             nf_mult_prev = nf_mult
             nf_mult = min(2 ** n, 8)
             sequence += [
-                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
+                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=(4, 3), stride=(2, 1), padding=1, bias=use_bias),
                 norm_layer(ndf * nf_mult),
                 nn.LeakyReLU(0.2, True),
-                nn.Dropout2d()
             ]
 
         nf_mult_prev = nf_mult
         nf_mult = min(2 ** n_layers, 8)
         sequence += [
-            nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+            nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=(3, 3), stride=1, padding=1, bias=use_bias),
             norm_layer(ndf * nf_mult),
             nn.LeakyReLU(0.2, True),
-            nn.Dropout2d()
         ]
 
-        # sequence += [nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]  # output 1 channel prediction map
         self.mapping = nn.Sequential(*sequence)
         self.adaptive_pool = nn.AdaptiveAvgPool2d((1, 1))  # output (B, ndf * nf_mult, 1, 1)
         self.fc = nn.Linear(ndf * nf_mult, 1)

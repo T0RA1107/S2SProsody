@@ -188,7 +188,7 @@ class S2SMixer(nn.Module):
         d_model = config["s2sMixer"]["decoder_hidden"]
         d_inner = config["s2sMixer"]["conv_filter_size"]
         kernel_size = config["s2sMixer"]["conv_kernel_size"]
-        dropout = config["s2sMixer"]["decoder_dropout"]
+        dropout = config["s2sMixer"]["dropout"]
 
         self.max_seq_len = config["s2sMixer"]["max_seq_len"]
         self.d_model = d_model

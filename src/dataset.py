@@ -112,7 +112,7 @@ class AudioDataset(Dataset):
         info_duration_std = {}
         for speaker_id in info_pitch.keys():
             if len(info_pitch[speaker_id]) == 0:
-                print(speaker_id)
+                continue
             pitch = np.concatenate(info_pitch[speaker_id])
             energy = np.concatenate(info_energy[speaker_id])
             duration = np.concatenate(info_duration[speaker_id])
