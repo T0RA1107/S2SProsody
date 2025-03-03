@@ -330,7 +330,6 @@ class SemiCycleGANModel(BaseModel):
             self.loss_log_D = {}
             self.weight_prosody = train_config["loss"]["weight"]["prosody"]
             self.weight_regdist_mean = train_config["loss"]["weight"]["regdist_mean"]
-            self.weight_regdist_var  = train_config["loss"]["weight"]["regdist_var"]
 
             self.netProsody_estimator = ProsodyDistEstimator1D(
                 3, train_config["loss"]["prosody"]["bins"], 4
@@ -544,7 +543,7 @@ class SemiCycleGANModel(BaseModel):
 
         # combined loss and calculate gradients
         loss_G = loss_G_audio + loss_prosody * self.weight_prosody + loss_PGR * self.weight_regdist_mean
-        # loss_G += loss_reg_pitch_var * self.weight_regdist_var
+        loss_log["total"] = loss_G.detach().cpu()
 
         loss_G.backward()
 
