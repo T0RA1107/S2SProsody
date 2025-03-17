@@ -1,7 +1,6 @@
 import argparse
 import os
 import datetime
-import random
 import yaml
 import json
 import gc
@@ -12,12 +11,12 @@ from torch.utils.data import DataLoader
 import wandb
 from tqdm import tqdm
 
-from FastSpeech2.evaluate import evaluate
-from FastSpeech2.utils.model import get_vocoder
+from libs.util.model import get_vocoder
 
-from models.semi_cycle_gan import SemiCycleGANModel
-from dataset import UnpairedAudioSignDataset, SignDataset
-from util.tool import init_random_seeds, save_inference, save_metadata, save_validation_loss
+from libs.models import SemiCycleGANModel
+from datasets import UnpairedAudioSignDataset, SignDataset
+from libs.util.tool import init_random_seeds
+from libs.util.save_data import save_inference, save_metadata, save_validation_loss
 
 # DDP
 import torch.distributed as dist
@@ -54,7 +53,7 @@ def main(args, configs, configs_ft):
     )
     inference_dataset = SignDataset(
         preprocess_config, train_config, args.local_rank,
-        phase="test", split="val", partial_list_path="./valid_list.txt"
+        phase="test", split="val", partial_list_path="./datasets/valid_list.txt"
     )
     speaker_info = dataset.audio_dataset.get_speaker_info()
     sign_info = dataset.sign_dataset.get_sign_prosody_info()
@@ -111,7 +110,7 @@ def main(args, configs, configs_ft):
         args, preprocess_config, model_config, train_config,
         speaker_info=speaker_info, sign_info=sign_info,
         configs_ft=configs_ft, distributed=distributed)      # create a model given opt.model and other options
-    model.setup(train_config)               # regular setup: load and print networks; create schedulers
+    model.setup(train_config, len(loader))               # regular setup: load and print networks; create schedulers
 
     vocoder = get_vocoder(model_config, device)
 
@@ -142,23 +141,22 @@ def main(args, configs, configs_ft):
 
     total_iters = 0
     total_step = train_config["step"]["total_step"]
-    n_epochs_decay = train_config["step"]["n_epochs_decay"]
     step_count = train_config["step"]["step_count"]
     log_step = train_config["step"]["log_step"]
     save_epochs = train_config["step"]["save_epochs"]
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
 
     if args.local_rank == 0:
-        progress = tqdm(total=len(range(step_count, total_step + n_epochs_decay)), desc="Training")
+        progress = tqdm(total=total_step, desc="Training")
+        progress.update(step_count)
         nxt_log_step = log_step
-    for epoch in range(step_count, total_step + n_epochs_decay):    # outer loop for different epochs.
-        model.update_learning_rate()    # update learning rates in the beginning of every epoch.
+    for epoch in range(step_count, total_step):    # outer loop for different epochs.
         if distributed:
             sampler.set_epoch(epoch)
         for batchs in loader:  # inner loop within one epoch
             for batch in batchs:
 
-                total_iters += 1
+                total_iters += batch_size * args.ngpus
                 model.set_input(batch)         # unpack data from dataset and apply preprocessing
                 loss_log = model.optimize_parameters()   # calculate loss functions, get gradients, update network weights
 
@@ -170,6 +168,8 @@ def main(args, configs, configs_ft):
                     if args.use_wandb:
                         wandb.log(log)
                     nxt_log_step += log_step
+                model.update_learning_rate()
+                print(model.get_learning_rate())
 
         if args.local_rank == 0:
             progress.update()

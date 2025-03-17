@@ -20,14 +20,6 @@ variance_embedding:
   energy_quantization: "linear" # support 'linear' or 'log', 'log' is allowed only if the energy values are not normalized during preprocessing
   n_bins: 256
 
-# gst:
-#   use_gst: False
-#   conv_filters: [32, 32, 64, 64, 128, 128]
-#   gru_hidden: 128
-#   token_size: 128
-#   n_style_token: 10
-#   attn_head: 4
-
 s2sMixer:
   decoder_layer: 3
   decoder_head: 2
@@ -41,15 +33,14 @@ D_audio:
   ndf: 64
   netD: basic
   n_layers_D: 3
-  norm: batch
+  norm: instance
   init_type: normal
   init_gain: 0.02
-  prosody_discriminator: True
-
+  prosody_discriminator: False
 
 multi_speaker: True
 speaker:
-  all: "/data/VCTK-Corpus/preprocess/all_speakers.txt"
+  all: None
   target:
     female: 95
     male: 101
@@ -59,4 +50,4 @@ max_seq_len: 5000
 vocoder:
   model: "HiFi-GAN" # support 'HiFi-GAN', 'MelGAN'
   speaker: "universal" # support  'LJSpeech', 'universal'
-  hifigan_path: "/home/ubuntu/slocal/S2SProsody/src/FastSpeech2/hifigan"
+  hifigan_path: "/home/aolab/Desktop/S2SProsody/src/libs/models/hifigan"

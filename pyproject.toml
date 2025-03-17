@@ -5,11 +5,6 @@ description = ""
 authors = ["T0RA <torapira@icloud.com>"]
 readme = "README.md"
 
-packages = [
-    { include = "FastSpeech2", from = "src/" },
-    { include = "GloFE", from = "src/" },
-]
-
 [tool.poetry.dependencies]
 python = ">=3.9.0,<4"
 pandas = ">=1.0.0"
@@ -34,11 +29,15 @@ soundfile = "0.10.3.post1"
 tensorboard = "2.2.2"
 tgt = "1.4.4"
 torch = "1.13.1"
-tqdm = "4.46.1"
+tqdm = ">=4.46.1"
 Unidecode = "1.1.1"
 ffmpeg-python = "^0.2.0"
 wandb = "^0.18.1"
 fastdtw = "^0.3.4"
+ffmpeg = "^1.4"
+evaluate = "^0.4.3"
+jiwer = "^3.1.0"
+textgrid = "^1.6.1"
 
 [tool.poetry.dev-dependencies]
 black = "^22.1.0"

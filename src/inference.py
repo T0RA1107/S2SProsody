@@ -9,11 +9,11 @@ import torch.utils
 from torch.utils.data import DataLoader
 
 # from FastSpeech2.evaluate import evaluate
-from FastSpeech2.utils.model import get_vocoder
+from libs.util.model import get_vocoder
 
-from models.semi_cycle_gan import SemiCycleGANModel
-from dataset import AudioDataset, SignDataset
-from util.tool import save_inference
+from libs.models.semi_cycle_gan import SemiCycleGANModel
+from datasets.dataset import AudioDataset, SignDataset
+from libs.util.save_data import save_inference
 
 # DDP
 import torch.distributed as dist
@@ -29,11 +29,16 @@ def main(args, configs, configs_ft):
 
     audio_dataset = AudioDataset(
         "train.txt", preprocess_config, train_config, model_config)  # to get speaker info from audio train dataset
+    train_dataset = SignDataset(
+        preprocess_config, train_config, args.local_rank,
+        phase="train", split="train"
+    )
     inference_dataset = SignDataset(
         preprocess_config, train_config, args.local_rank,
-        phase="test", split="val", partial_list_path=". inference_list.txt"
+        phase="test", split="test", partial_list_path="./test_0.txt"
     )
     speaker_info = audio_dataset.get_speaker_info()
+    sign_info = train_dataset.get_sign_prosody_info()
     with open(
         os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
     ) as f:
@@ -56,7 +61,8 @@ def main(args, configs, configs_ft):
 
     model = SemiCycleGANModel(
         args, preprocess_config, model_config, train_config,
-        speaker_info=speaker_info, configs_ft=configs_ft, isTrain=False, distributed=False)      # create a model given opt.model and other options
+        speaker_info=speaker_info, sign_info=sign_info,
+        configs_ft=configs_ft, isTrain=False, distributed=False)      # create a model given opt.model and other options
     model.load_networks(args.ckpt_path)
     model.setup(train_config)               # regular setup: load and print networks; create schedulers
 
@@ -72,7 +78,10 @@ def main(args, configs, configs_ft):
 
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
 
-    save_inference(model, vocoder,  inference_loader, sampling_rate, stats, wav_dir, -1, model_config, preprocess_config)
+    save_inference(model, vocoder, inference_loader,
+                   args.local_rank, sampling_rate, stats, wav_dir,
+                   -1, model_config, preprocess_config, inference_dataset.partial_vid2gender,
+                   need_prosody_dist=False)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

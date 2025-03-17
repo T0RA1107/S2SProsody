@@ -1,14 +1,14 @@
 path:
-  ckpt_path: "./output/ckpt/Sign2Speech"
-  log_path: "./output/log/Sign2Speech"
-  result_path: "./output/result/Sign2Speech"
+  ckpt_path: "../output/ckpt/Sign2Speech"
+  log_path: "../output/log/Sign2Speech"
+  result_path: "../output/result/Sign2Speech"
 
-fine-tuning: "./FastSpeech2/config/VCTK"
+fine-tuning: "./config/VCTK"
 
 optimizer:
   batch_size: 20 # 16
-  lr_G_s2a: 0.00001
-  lr_D_a: 0.01
+  lr_G_s2a: 0.0001
+  lr_D_a: 0.0004
   lr_fine-tuning: 0.001
   betas: [0.5, 0.9]
   eps: 0.000000001
@@ -16,8 +16,6 @@ optimizer:
   grad_clip_thresh: 1.0
   grad_acc_step: 1
   warm_up_step: 4000
-  anneal_steps: [300000, 400000, 500000]
-  anneal_rate: 0.3
 
 loss:
   prosody:
@@ -45,8 +43,6 @@ GAN:
   lr_policy: cosine
   lr_decay_iters: 50
 
-gpu_ids: [0, 1]
-
 step:
   total_step: 50 # 900000
   step_count: 0
@@ -54,4 +50,3 @@ step:
   synth_step: 1000
   val_step: 1000
   save_epochs: 1
-  n_epochs_decay: 0
