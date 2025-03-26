@@ -169,7 +169,6 @@ def main(args, configs, configs_ft):
                         wandb.log(log)
                     nxt_log_step += log_step
                 model.update_learning_rate()
-                print(model.get_learning_rate())
 
         if args.local_rank == 0:
             progress.update()

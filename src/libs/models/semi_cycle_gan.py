@@ -77,11 +77,8 @@ class SemiCycleGANModel(BaseModel):
 
         if self.isTrain:
             # define discriminators
-            self.prosody_discriminator = model_config["D_audio"]["prosody_discriminator"]
-            input_nc = 3 if self.prosody_discriminator else 1
-            dicriminator_type = "audio_prosody" if self.prosody_discriminator else "audio"
             self.netD_audio = networks.define_D(
-                input_nc, model_config["D_audio"]["ndf"], dicriminator_type,
+                1, model_config["D_audio"]["ndf"], "audio",
                 model_config["D_audio"]["n_layers_D"], model_config["D_audio"]["norm"],
                 model_config["D_audio"]["init_type"], model_config["D_audio"]["init_gain"],
                 args, distributed)
@@ -123,11 +120,6 @@ class SemiCycleGANModel(BaseModel):
             self.grad_clip_thresh = train_config["optimizer"]["grad_clip_thresh"]
 
     def set_input(self, inputs):
-        """Unpack input data from the dataloader and perform necessary pre-processing steps.
-
-        Parameters:
-            inputs (dict): include the data itself and its metadata information.
-        """
         self.real_sign = inputs["sign"]
         self.real_audio = inputs["audio"]
 
@@ -190,57 +182,29 @@ class SemiCycleGANModel(BaseModel):
         torch.cuda.empty_cache()
         return output_wo_sign, output_w_sign, speakers.detach().cpu().tolist()
 
-    def backward_D_basic(self, netD, real, fake):
-        # Real
-        pred_real = netD(real)
-        loss_D_real = self.criterionGAN(pred_real, True)
-        # Fake
-        pred_fake = netD(fake.detach())
-        loss_D_fake = self.criterionGAN(pred_fake, False)
-        # Combined loss and calculate gradients
-        loss_D = (loss_D_real + loss_D_fake) * 0.5
-        loss_D.backward()
-        loss_D = loss_D.detach().cpu()
-        torch.cuda.empty_cache()
-        return loss_D
+    def backward_D(self, output: TrainOutput):
+        fake, fake_lens = self.fake_audio_pool.query(
+            output.mels.unsqueeze(1).detach().cpu(),
+            output.mel_lens.detach().cpu()
+            )
+        fake = fake.to(self.device, non_blocking=True)
 
-    def backward_D_audio(self, output: TrainOutput):
-        if self.prosody_discriminator:
-            fake_prosody_predictions = torch.cat([
-                output.p_predictions.unsqueeze(1),
-                output.e_predictions.unsqueeze(1),
-                output.log_d_predictions.unsqueeze(1)
-            ], dim=1).detach().cpu()
-            fake, fake_lens = self.fake_audio_pool.query(
-                fake_prosody_predictions.detach().cpu(),
-                output.src_lens.detach().cpu()
-                )
-            fake = fake.to(self.device, non_blocking=True)
-
-            real = torch.cat([
-                self.real_audio.pitches.unsqueeze(1).float(),
-                self.real_audio.energies.unsqueeze(1).float(),
-                torch.log(self.real_audio.durations.float() + 1).unsqueeze(1)
-            ], dim=1).to(self.device, non_blocking=True)
-            real_lens = self.real_audio.text_lens
-        else:
-            fake, fake_lens = self.fake_audio_pool.query(
-                output.mels.unsqueeze(1).detach().cpu(),
-                output.mel_lens.detach().cpu()
-                )
-            fake = fake.to(self.device, non_blocking=True)
-
-            real = self.real_audio.mels.unsqueeze(1).float().to(self.device, non_blocking=True)
-            real_lens = self.real_audio.mel_lens
+        real = self.real_audio.mels.unsqueeze(1).float().to(self.device, non_blocking=True)
+        real_lens = self.real_audio.mel_lens
 
         clip_length = min(min(fake_lens), min(real_lens)) + 8
         fake = random_clip_batch(fake, fake_lens, clip_length)
         real = random_clip_batch(real, real_lens, clip_length)
-        loss_D = self.backward_D_basic(
-            self.netD_audio,
-            real,
-            fake
-        )
+
+        pred_fake = self.netD_audio(fake.detach())
+        loss_D_fake = self.criterionGAN(pred_fake, False)
+
+        pred_real = self.netD_audio(real.detach())
+        loss_D_real = self.criterionGAN(pred_real, True)
+
+        loss_D = (loss_D_real + loss_D_fake) * 0.5
+        loss_D.backward()
+        loss_D = loss_D.detach().cpu()
         torch.cuda.empty_cache()
         return { "GAN loss/D": loss_D }
 
@@ -248,18 +212,10 @@ class SemiCycleGANModel(BaseModel):
         loss_log = dict()
 
         # GAN loss D_audio(G_sign2audio(sign))
-        if self.prosody_discriminator:
-            fake = torch.cat([
-                output_w_sign.p_predictions.unsqueeze(1),
-                output_w_sign.e_predictions.unsqueeze(1),
-                output_w_sign.log_d_predictions.unsqueeze(1)
-            ], dim=1)
-            clip_length = output_w_sign.src_lens.min().detach().cpu() + 8
-            fake = random_clip_batch(fake, output_w_sign.src_lens, clip_length)
-        else:
-            fake = output_w_sign.mels
-            clip_length = output_w_sign.mel_lens.min().detach().cpu() + 8
-            fake = random_clip_batch(fake, output_w_sign.mel_lens, clip_length)
+        fake = output_w_sign.mels
+        clip_length = output_w_sign.mel_lens.min().detach().cpu() + 8
+        fake = random_clip_batch(fake, output_w_sign.mel_lens, clip_length)
+
         pred_fake = self.netD_audio(fake)
         loss_G_audio = self.criterionGAN(pred_fake, True)
         loss_log["GAN loss/G"] = loss_G_audio.detach().cpu()
@@ -291,6 +247,7 @@ class SemiCycleGANModel(BaseModel):
         torch.cuda.empty_cache()
         return loss_log
 
+    @torch.no_grad()
     def validate(self, sign):
         loss_log = {}
         batch_size = sign.text_tokens.shape[0]
@@ -301,65 +258,55 @@ class SemiCycleGANModel(BaseModel):
         speakers = random.choices(self.all_speakers, k=batch_size)
         speakers = torch.tensor(speakers, device=self.device).long()
 
-        with torch.no_grad():
+        # with sign language TTS
+        pred = self.netG_sign2audio(
+            speakers,
+            text_tokens,
+            token_length,
+            max_src_len,
+            key_point=sign.visual_prefix.to(self.device, non_blocking=True)
+        )
 
-            # with sign language TTS
-            pred = self.netG_sign2audio(
-                speakers,
-                text_tokens,
-                token_length,
-                max_src_len,
-                key_point=sign.visual_prefix.to(self.device, non_blocking=True)
-            )
+        audio = pred.postnet_output.masked_fill(
+            pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
+        audio_lens = pred.mel_lens
 
-            audio = pred.postnet_output.masked_fill(
-                pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
-            audio_lens = pred.mel_lens
+        prosody_predictions = torch.cat([
+            pred.p_predictions.unsqueeze(1),
+            pred.e_predictions.unsqueeze(1),
+            pred.log_d_predictions.unsqueeze(1)
+        ], dim=1)
+        sign_prosody_predictions = self.netProsody_estimator(prosody_predictions)
+        output_w_sign = TrainOutput(
+            audio, sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
+            pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
+            sign_prosody_predictions)
 
-            prosody_predictions = torch.cat([
-                pred.p_predictions.unsqueeze(1),
-                pred.e_predictions.unsqueeze(1),
-                pred.log_d_predictions.unsqueeze(1)
-            ], dim=1)
-            sign_prosody_predictions = self.netProsody_estimator(prosody_predictions)
-            output_w_sign = TrainOutput(
-                audio, sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
-                pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
-                sign_prosody_predictions)
+        # GAN Loss
+        fake = output_w_sign.mels
+        clip_length = output_w_sign.mel_lens.min().detach().cpu() + 8
+        fake = random_clip_batch(fake, output_w_sign.mel_lens, clip_length)
 
-            # GAN Loss
-            if self.prosody_discriminator:
-                fake = torch.cat([
-                    output_w_sign.p_predictions.unsqueeze(1),
-                    output_w_sign.e_predictions.unsqueeze(1),
-                    output_w_sign.log_d_predictions.unsqueeze(1)
-                ], dim=1)
-                clip_length = output_w_sign.src_lens.min().detach().cpu() + 8
-                fake = random_clip_batch(fake, output_w_sign.src_lens, clip_length)
-            else:
-                fake = output_w_sign.mels
-                clip_length = output_w_sign.mel_lens.min().detach().cpu() + 8
-                fake = random_clip_batch(fake, output_w_sign.mel_lens, clip_length)
+        pred_fake = self.netD_audio(fake)
+        loss_G_audio = self.criterionGAN(pred_fake, True)
+        loss_log["GAN loss/G (valid)"] = loss_G_audio.detach().cpu()
 
-            pred_fake = self.netD_audio(fake)
-            loss_G_audio = self.criterionGAN(pred_fake, True)
-            loss_log["GAN loss/G (valid)"] = loss_G_audio.detach().cpu()
+        # Prosody Reconstruction Loss
+        prosody_label = sign.prosody_label.to(self.device, non_blocking=True)
+        _, pr_info = self.criterionPR(sign_prosody_predictions, prosody_label)
+        loss_log["prosody loss/v_loss (valid)"] = pr_info.v_loss
+        loss_log["prosody loss/a_loss (valid)"] = pr_info.a_loss
+        loss_log["prosody loss/total (valid)"] = pr_info.total
 
-            # Prosody Reconstruction Loss
-            prosody_label = sign.prosody_label.to(self.device, non_blocking=True)
-            _, pr_info = self.criterionPR(sign_prosody_predictions, prosody_label)
-            loss_log["prosody loss/v_loss (valid)"] = pr_info.v_loss
-            loss_log["prosody loss/a_loss (valid)"] = pr_info.a_loss
-            loss_log["prosody loss/total (valid)"] = pr_info.total
-
-            # Prosody Guided Regularization Loss
-            _, pgr_info = self.criterionRGR(output_w_sign, prosody_label, speakers.detach().cpu().tolist())
-            loss_log["Regularization/Energy mean (valid)"] = pgr_info.energy
-            loss_log["Regularization/Pitch mean (valid)"] = pgr_info.pitch
+        # Prosody Guided Regularization Loss
+        _, pgr_info = self.criterionRGR(output_w_sign, prosody_label, speakers.detach().cpu().tolist())
+        loss_log["Regularization/Energy mean (valid)"] = pgr_info.energy
+        loss_log["Regularization/Pitch mean (valid)"] = pgr_info.pitch
 
         torch.cuda.empty_cache()
         return loss_log
 
+    @torch.no_grad()
     def inference(self, sign, vid2gender=None, estimateProsody=False):
         token_length = sign.token_length.to(self.device, non_blocking=True)
         max_src_len = token_length.max().to(self.device, non_blocking=True)
@@ -372,61 +319,60 @@ class SemiCycleGANModel(BaseModel):
         speakers = torch.tensor(speakers, device=self.device).long()
 
         # without sign language TTS
-        with torch.no_grad():
-            pred = self.netG_sign2audio(
-                speakers,
-                text_tokens,
-                token_length,
-                max_src_len,
-            )
+        pred = self.netG_sign2audio(
+            speakers,
+            text_tokens,
+            token_length,
+            max_src_len,
+        )
 
-            audio_wo_sign = pred.postnet_output.masked_fill(
-                pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
+        audio_wo_sign = pred.postnet_output.masked_fill(
+            pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
 
-            audio_wo_sign_lens = pred.mel_lens.detach().cpu()
+        audio_wo_sign_lens = pred.mel_lens.detach().cpu()
 
-            pred_prosody_label = None
-            if estimateProsody:
-                prosody_predictions = torch.cat([
-                    pred.p_predictions.unsqueeze(1),
-                    pred.e_predictions.unsqueeze(1),
-                    pred.log_d_predictions.unsqueeze(1)
-                ], dim=1)
-                pred_prosody_label = self.netProsody_estimator(prosody_predictions)
-                pred_prosody_label = F.softmax(pred_prosody_label, dim=-1).cpu().numpy()
-            
-            output_wo_sign = InferenceOutput(
-                audio_wo_sign, sign.token_length.numpy(), audio_wo_sign_lens,
-                pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy(),
-                pred_prosody_label)
+        pred_prosody_label = None
+        if estimateProsody:
+            prosody_predictions = torch.cat([
+                pred.p_predictions.unsqueeze(1),
+                pred.e_predictions.unsqueeze(1),
+                pred.log_d_predictions.unsqueeze(1)
+            ], dim=1)
+            pred_prosody_label = self.netProsody_estimator(prosody_predictions)
+            pred_prosody_label = F.softmax(pred_prosody_label, dim=-1).cpu().numpy()
 
-            # with sign language TTS
-            pred = self.netG_sign2audio(
-                speakers,
-                text_tokens,
-                token_length,
-                max_src_len,
-                key_point=sign.visual_prefix.to(self.device, non_blocking=True)
-            )
+        output_wo_sign = InferenceOutput(
+            audio_wo_sign, sign.token_length.numpy(), audio_wo_sign_lens,
+            pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy(),
+            pred_prosody_label)
 
-            audio_w_sign = pred.postnet_output.masked_fill(
-                pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
-            audio_w_sign_lens = pred.mel_lens
+        # with sign language TTS
+        pred = self.netG_sign2audio(
+            speakers,
+            text_tokens,
+            token_length,
+            max_src_len,
+            key_point=sign.visual_prefix.to(self.device, non_blocking=True)
+        )
 
-            pred_prosody_label = None
-            if estimateProsody:
-                prosody_predictions = torch.cat([
-                    pred.p_predictions.unsqueeze(1),
-                    pred.e_predictions.unsqueeze(1),
-                    pred.log_d_predictions.unsqueeze(1)
-                ], dim=1)
-                pred_prosody_label = self.netProsody_estimator(prosody_predictions)
-                pred_prosody_label = F.softmax(pred_prosody_label, dim=-1).cpu().numpy()
+        audio_w_sign = pred.postnet_output.masked_fill(
+            pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.postnet_output.shape[2]), 0.0).unsqueeze(1)
+        audio_w_sign_lens = pred.mel_lens
 
-            output_w_sign = InferenceOutput(
-                audio_w_sign, sign.token_length.numpy(), audio_w_sign_lens,
-                pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy(),
-                pred_prosody_label)
+        pred_prosody_label = None
+        if estimateProsody:
+            prosody_predictions = torch.cat([
+                pred.p_predictions.unsqueeze(1),
+                pred.e_predictions.unsqueeze(1),
+                pred.log_d_predictions.unsqueeze(1)
+            ], dim=1)
+            pred_prosody_label = self.netProsody_estimator(prosody_predictions)
+            pred_prosody_label = F.softmax(pred_prosody_label, dim=-1).cpu().numpy()
+
+        output_w_sign = InferenceOutput(
+            audio_w_sign, sign.token_length.numpy(), audio_w_sign_lens,
+            pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(), pred.d_rounded.cpu().numpy(),
+            pred_prosody_label)
 
         torch.cuda.empty_cache()
         return output_wo_sign, output_w_sign, speakers.cpu().numpy()
@@ -446,10 +392,9 @@ class SemiCycleGANModel(BaseModel):
         nn.utils.clip_grad_norm_(self.netProsody_estimator.parameters(), self.grad_clip_thresh)
         self.optimizer_G.step()       # update G's weights
         if self.step == 0:
-            # D_A and D_B
             self.set_requires_grad([self.netD_audio], True)
             self.optimizer_D.zero_grad(set_to_none=True)   # set D's gradients to zero
-            self.loss_log_D = self.backward_D_audio(output_w_sign)      # calculate gradients for D_audio
+            self.loss_log_D = self.backward_D(output_w_sign)      # calculate gradients for D_audio
             nn.utils.clip_grad_norm_(self.netD_audio.parameters(), self.grad_clip_thresh)
             self.optimizer_D.step()  # update D_A and D_B's weights
         self.step = (self.step + 1) % 2

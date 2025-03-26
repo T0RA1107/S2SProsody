@@ -6,8 +6,6 @@ from torch.optim import lr_scheduler
 from transformers import get_cosine_schedule_with_warmup
 from torch.nn.parallel import DistributedDataParallel
 
-from .modules.transformer.Layers import FFTBlockCrossAttention
-
 ###############################################################################
 # Helper Functions
 ###############################################################################
