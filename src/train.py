@@ -110,7 +110,7 @@ def main(args, configs, configs_ft):
         args, preprocess_config, model_config, train_config,
         speaker_info=speaker_info, sign_info=sign_info,
         configs_ft=configs_ft, distributed=distributed)      # create a model given opt.model and other options
-    model.setup(train_config, len(loader))               # regular setup: load and print networks; create schedulers
+    model.setup(train_config, len(loader) * group_size)               # regular setup: load and print networks; create schedulers
 
     vocoder = get_vocoder(model_config, device)
 
@@ -129,7 +129,7 @@ def main(args, configs, configs_ft):
     if args.local_rank == 0 and args.use_wandb:
         wandb.init(
             project="Sign2Speech",
-            group="Reg on Prosody Dist",
+            group=args.group,
             job_type="training",
             name=run_name,
             config={
@@ -224,11 +224,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "-t", "--train_config", type=str, required=True, help="path to train.yaml"
     )
-    parser.add_argument(
-        "--isTrain", action="store_true"
-    )
+    # W & B related
     parser.add_argument(
         "--use_wandb", action="store_true"
+    )
+    parser.add_argument(
+        "--group", type=str
     )
     parser.add_argument(
         "--fine_tuning", action="store_true"

@@ -14,13 +14,29 @@ from .sign2speech import Sign2Speech
 from .prosody_estimator import ProsodyDistEstimator1D
 
 
-TrainOutput = namedtuple("TrainOutput",
-                         "mels src_lens mel_lens src_masks mel_masks\
-                         p_predictions e_predictions log_d_predictions d_rounded\
-                         sign_prosody_predictions")
+TrainOutput = namedtuple("TrainOutput", [
+    "mels",
+    "src_lens",
+    "mel_lens",
+    "src_masks",
+    "mel_masks",
+    "p_predictions",
+    "e_predictions",
+    "log_d_predictions",
+    "d_rounded",
+    "sign_prosody_predictions",
+    "weight_sign",
+])
 
-InferenceOutput = namedtuple("InferenceOutput",
-                             "mels src_lens mel_lens p_predictions e_predictions d_rounded sign_prosody_predictions")
+InferenceOutput = namedtuple("InferenceOutput", [
+    "mels",
+    "src_lens",
+    "mel_lens",
+    "p_predictions",
+    "e_predictions",
+    "d_rounded",
+    "sign_prosody_predictions",
+])
 
 
 def random_clip_batch(inputs: torch.Tensor, lengths: torch.Tensor, clip_length: int) -> torch.Tensor:
@@ -154,7 +170,7 @@ class SemiCycleGANModel(BaseModel):
             output_wo_sign = TrainOutput(
                 audio, self.real_sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
                 pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
-                pred_prosody_label)
+                pred_prosody_label, None)
 
         # with sign language TTS
         pred = self.netG_sign2audio(
@@ -177,7 +193,7 @@ class SemiCycleGANModel(BaseModel):
         output_w_sign = TrainOutput(
             audio, self.real_sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
             pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
-            pred_prosody_label)
+            pred_prosody_label, pred.weight_sign)
 
         torch.cuda.empty_cache()
         return output_wo_sign, output_w_sign, speakers.detach().cpu().tolist()
@@ -243,6 +259,10 @@ class SemiCycleGANModel(BaseModel):
         loss_log["total"] = loss_G.detach().cpu()
 
         loss_G.backward()
+        
+        # Output memo
+        loss_log["output/weight_sign mean"] = output_w_sign.weight_sign.mean().detach().cpu()
+        loss_log["output/weight_sign std"] = output_w_sign.weight_sign.std().detach().cpu()
 
         torch.cuda.empty_cache()
         return loss_log
@@ -280,7 +300,7 @@ class SemiCycleGANModel(BaseModel):
         output_w_sign = TrainOutput(
             audio, sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
             pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
-            sign_prosody_predictions)
+            sign_prosody_predictions, pred.weight_sign)
 
         # GAN Loss
         fake = output_w_sign.mels

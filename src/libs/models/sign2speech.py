@@ -9,17 +9,22 @@ from .modules import VarianceAdaptorWithReference
 from .fastspeech2 import FastSpeech2
 from .visual_backbone import PartedPoseBackbone
 
-SpeechPrediction = namedtuple("SpeechPrediction",
-                              "output\
-                              postnet_output\
-                              p_predictions\
-                              e_predictions\
-                              log_d_predictions\
-                              d_rounded\
-                              src_masks\
-                              mel_masks\
-                              src_lens\
-                              mel_lens")
+SpeechPrediction = namedtuple("SpeechPrediction", [
+    "output",
+    "postnet_output",
+    "p_predictions",
+    "e_predictions",
+    "log_d_predictions",
+    "d_rounded",
+    "src_masks",
+    "mel_masks",
+    "src_lens",
+    "mel_lens",
+    "weight_sign",
+    "pitch_confidence",
+    "energy_confidence",
+    "log_duration_confidence"
+])
 
 
 class Sign2Speech(FastSpeech2):
@@ -41,6 +46,11 @@ class Sign2Speech(FastSpeech2):
             self.visual_project = nn.Linear(self.dim_visual, self.dim_embedding)
         else:
             self.visual_project == nn.Identity()
+        self.MoE = nn.Sequential(
+            nn.Linear(2 * self.dim_embedding, self.dim_embedding),
+            nn.ReLU(),
+            nn.Linear(self.dim_embedding, 1)
+        )
 
         self.speaker_text_embedding = None
 
@@ -60,7 +70,7 @@ class Sign2Speech(FastSpeech2):
         e_control=1.0,
         d_control=1.0,
         key_point=None  # [B, C, T, V]: Batch, Channels, Time, VisualKeypoints
-    ):
+    ) -> SpeechPrediction:
         if len(max_src_len.shape) > 0:
             max_src_len = max_src_len[0]
         src_masks = get_mask_from_lengths(src_lens, max_src_len)
@@ -76,11 +86,15 @@ class Sign2Speech(FastSpeech2):
                 -1, max_src_len, -1
             )
 
+        weight_sign = None
         # Cross Attention with keypoint
         if key_point is not None:
             sign_embbeding = self.sign_processer(key_point)  # [B, C, T, V] -> [B, T, C]
             sign_embbeding = self.visual_project(sign_embbeding)
             output_crsattn = self.s2s_mixier(output, sign_embbeding)
+            concat_prosody_embedding = torch.cat((output_crsattn.mean(dim=1), output.mean(dim=1)), dim=1)
+            weight_sign = torch.sigmoid(self.MoE(concat_prosody_embedding)).unsqueeze(2)
+            prosody_embedding = weight_sign * output_crsattn + (1 - weight_sign) * output
 
             (
                 output,
@@ -90,9 +104,12 @@ class Sign2Speech(FastSpeech2):
                 d_rounded,
                 mel_lens,
                 mel_masks,
+                pitch_confidence,
+                energy_confidence,
+                log_duration_confidence
             ) = self.variance_adaptor(
                 output,
-                output_crsattn,
+                prosody_embedding,
                 src_masks,
                 mel_masks,
                 max_mel_len,
@@ -112,6 +129,9 @@ class Sign2Speech(FastSpeech2):
                 d_rounded,
                 mel_lens,
                 mel_masks,
+                pitch_confidence,
+                energy_confidence,
+                log_duration_confidence
             ) = self.variance_adaptor(
                 output,
                 output,
@@ -142,4 +162,8 @@ class Sign2Speech(FastSpeech2):
             mel_masks,
             src_lens,
             mel_lens,
+            weight_sign,
+            pitch_confidence,
+            energy_confidence,
+            log_duration_confidence
         )

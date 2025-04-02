@@ -1,11 +1,28 @@
 import os
 import json
+from collections import namedtuple
 
 import torch.nn as nn
 
 from libs.util.tool import get_mask_from_lengths
 from .modules.transformer import Encoder, Decoder, PostNet
 from .modules import VarianceAdaptor
+
+SpeechPrediction = namedtuple("SpeechPrediction", [
+    "output",
+    "postnet_output",
+    "p_predictions",
+    "e_predictions",
+    "log_d_predictions",
+    "d_rounded",
+    "src_masks",
+    "mel_masks",
+    "src_lens",
+    "mel_lens",
+    "pitch_confidence",
+    "energy_confidence",
+    "log_duration_confidence"
+])
 
 
 class FastSpeech2(nn.Module):
@@ -76,6 +93,9 @@ class FastSpeech2(nn.Module):
             d_rounded,
             mel_lens,
             mel_masks,
+            pitch_confidence,
+            energy_confidence,
+            log_duration_confidence
         ) = self.variance_adaptor(
             output,
             src_masks,
@@ -105,4 +125,7 @@ class FastSpeech2(nn.Module):
             mel_masks,
             src_lens,
             mel_lens,
+            pitch_confidence,
+            energy_confidence,
+            log_duration_confidence
         )

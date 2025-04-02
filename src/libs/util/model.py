@@ -5,19 +5,15 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from libs.models import hifigan
-from libs.models import FastSpeech2
+from libs.models import hifigan, FastSpeech2, networks
 from libs.models.optimizer import ScheduledOptim
 
 
-def get_model(args, configs, device, configs_ft=None, train=False):
+def get_model(args, configs, distributed, train=False):
     (preprocess_config, model_config, train_config) = configs
 
-    if configs_ft is None:
-        model = FastSpeech2(preprocess_config, model_config).to(device)
-    else:
-        (preprocess_config_ft, model_config_ft, _) = configs_ft
-        model = FastSpeech2(preprocess_config_ft, model_config_ft).to(device)
+    model = FastSpeech2(preprocess_config, model_config)
+    model = networks.init_net(model, args, distributed)
     if args.restore_step:
         ckpt_path = os.path.join(
             train_config["path"]["ckpt_path"],
@@ -25,7 +21,10 @@ def get_model(args, configs, device, configs_ft=None, train=False):
         )
         print(ckpt_path)
         ckpt = torch.load(ckpt_path)
-        model.load_state_dict(ckpt["model"])
+        if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+            model.module.load_state_dict(ckpt["model"], strict=False)
+        else:
+            model.load_state_dict(ckpt["model"], strict=False)
 
     if train:
         scheduled_optim = ScheduledOptim(
@@ -33,48 +32,6 @@ def get_model(args, configs, device, configs_ft=None, train=False):
         )
         if args.restore_step:
             scheduled_optim.load_state_dict(ckpt["optimizer"])
-        elif configs_ft is not None:
-            assert args.restore_step_ft is not None
-            train_config_ft = configs_ft[2]
-            ckpt_path = os.path.join(
-                train_config_ft["path"]["ckpt_path"],
-                "{}.pth.tar".format(args.restore_step_ft),
-            )
-            ckpt = torch.load(ckpt_path)
-            model.load_state_dict(ckpt["model"])
-            if model_config["multi_speaker"]:
-                with open(
-                    os.path.join(
-                        preprocess_config["path"]["preprocessed_path"], "speakers.json"
-                    ),
-                    "r",
-                ) as f:
-                    n_speaker = len(json.load(f))
-                model.speaker_emb = nn.Embedding(
-                    n_speaker,
-                    model_config["transformer"]["encoder_hidden"],
-                ).to(device)
-                emb_params = []
-                other_params = []
-                for name, param in model.named_parameters():
-                    if name == "speaker_emb.weight":
-                        emb_params.append(param)
-                    else:
-                        other_params.append(param)
-                if isinstance(train_config["optimizer"]["lr"], float):
-                    _optimizer = torch.optim.Adam(
-                        [{ "params": emb_params,
-                        "lr": train_config["optimizer"]["lr_fine-tuning"],
-                        "init_lr": train_config["optimizer"]["lr_fine-tuning"] },
-                        { "params": other_params,
-                        "lr": train_config["optimizer"]["lr"],
-                        "init_lr": train_config["optimizer"]["lr"] },
-                        ],
-                        betas=train_config["optimizer"]["betas"],
-                        eps=train_config["optimizer"]["eps"],
-                        weight_decay=train_config["optimizer"]["weight_decay"],
-                    )
-                    scheduled_optim._optimizer = _optimizer
 
         model.train()
         return model, scheduled_optim

@@ -9,6 +9,4 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nnodes=1 --nproc_per_node=$GPUS train.py\
  -t config/${dataset}/train.yaml\
  --fine_tuning\
  --restore_step_ft 1000000\
- --save_ckpt\
- --use_wandb\
- --group "MoE"
+ --without_save_wav

@@ -1,11 +1,25 @@
+from collections import namedtuple
+
 import torch
 import torch.nn as nn
+
+FastSpeech2LossOutput = namedtuple("FastSpeech2LossOutput", [
+    "total_loss",
+    "mel_loss",
+    "postnet_mel_loss",
+    "pitch_loss",
+    "energy_loss",
+    "duration_loss",
+    "pitch_likelihood_loss",
+    "energy_likelihood_loss",
+    "log_duration_likelihood_loss",
+])
 
 
 class FastSpeech2Loss(nn.Module):
     """ FastSpeech2 Loss """
 
-    def __init__(self, preprocess_config, model_config):
+    def __init__(self, preprocess_config, model_config, likelihood_pred=False):
         super(FastSpeech2Loss, self).__init__()
         self.pitch_feature_level = preprocess_config["preprocessing"]["pitch"][
             "feature"
@@ -15,8 +29,11 @@ class FastSpeech2Loss(nn.Module):
         ]
         self.mse_loss = nn.MSELoss()
         self.mae_loss = nn.L1Loss()
+        self.likelihood_pred = likelihood_pred
+        if likelihood_pred:
+            self.likelihood_loss = nn.GaussianNLLLoss()
 
-    def forward(self, inputs, predictions):
+    def forward(self, inputs, predictions) -> FastSpeech2LossOutput:
         (
             mel_targets,
             _,
@@ -36,7 +53,7 @@ class FastSpeech2Loss(nn.Module):
             mel_masks,
             _,
             _,
-        ) = predictions
+        ) = predictions[:10]
         src_masks = ~src_masks
         mel_masks = ~mel_masks
         log_duration_targets = torch.log(duration_targets.float() + 1)
@@ -82,11 +99,25 @@ class FastSpeech2Loss(nn.Module):
             mel_loss + postnet_mel_loss + duration_loss + pitch_loss + energy_loss
         )
 
-        return (
+        pitch_likelihood_loss = None
+        energy_likelihood_loss = None
+        log_duration_likelihood_loss = None
+
+        if self.likelihood_pred:
+            pitch_confidence, energy_confidence, log_duration_confidence = predictions[10:]
+            pitch_likelihood_loss = self.likelihood_loss(pitch_predictions.view(-1), pitch_targets.view(-1), torch.exp(pitch_confidence.view(-1)))
+            energy_likelihood_loss = self.likelihood_loss(energy_predictions.view(-1), energy_targets.view(-1), torch.exp(energy_confidence.view(-1)))
+            log_duration_likelihood_loss = self.likelihood_loss(log_duration_predictions.view(-1), log_duration_targets.view(-1), torch.exp(log_duration_confidence.view(-1)))
+            total_loss += pitch_likelihood_loss + energy_likelihood_loss + log_duration_likelihood_loss
+
+        return FastSpeech2LossOutput(
             total_loss,
             mel_loss,
             postnet_mel_loss,
             pitch_loss,
             energy_loss,
             duration_loss,
+            pitch_likelihood_loss,
+            energy_likelihood_loss,
+            log_duration_likelihood_loss
         )
