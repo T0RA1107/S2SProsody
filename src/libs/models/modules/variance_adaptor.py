@@ -18,7 +18,6 @@ class VarianceAdaptor(nn.Module):
         self.length_regulator = LengthRegulator()
         self.pitch_predictor = VariancePredictor(model_config)
         self.energy_predictor = VariancePredictor(model_config)
-        self.use_confidence = model_config["variance_predictor"]["confidence"]
 
         self.pitch_feature_level = preprocess_config["preprocessing"]["pitch"][
             "feature"
@@ -74,7 +73,7 @@ class VarianceAdaptor(nn.Module):
         )
 
     def get_pitch_embedding(self, x, target, mask, control):
-        prediction, confidence = self.pitch_predictor(x, mask)
+        prediction = self.pitch_predictor(x, mask)
         if target is not None:
             embedding = self.pitch_embedding(torch.bucketize(target, self.pitch_bins))
         else:
@@ -82,10 +81,10 @@ class VarianceAdaptor(nn.Module):
             embedding = self.pitch_embedding(
                 torch.bucketize(prediction, self.pitch_bins)
             )
-        return prediction, confidence, embedding
+        return prediction, embedding
 
     def get_energy_embedding(self, x, target, mask, control):
-        prediction, confidence = self.energy_predictor(x, mask)
+        prediction = self.energy_predictor(x, mask)
         if target is not None:
             embedding = self.energy_embedding(
                 torch.bucketize(target, self.energy_bins)
@@ -95,7 +94,7 @@ class VarianceAdaptor(nn.Module):
             embedding = self.energy_embedding(
                 torch.bucketize(prediction, self.energy_bins)
             )
-        return prediction, confidence, embedding
+        return prediction, embedding
 
     def forward(
         self,
@@ -111,14 +110,14 @@ class VarianceAdaptor(nn.Module):
         d_control=1.0,
     ):
 
-        log_duration_prediction, log_duration_confidence = self.duration_predictor(x, src_mask)
+        log_duration_prediction = self.duration_predictor(x, src_mask)
         if self.pitch_feature_level == "phoneme_level":
-            pitch_prediction, pitch_confidence, pitch_embedding = self.get_pitch_embedding(
+            pitch_prediction, pitch_embedding = self.get_pitch_embedding(
                 x, pitch_target, src_mask, p_control
             )
             x = x + pitch_embedding
         if self.energy_feature_level == "phoneme_level":
-            energy_prediction, energy_confidence, energy_embedding = self.get_energy_embedding(
+            energy_prediction, energy_embedding = self.get_energy_embedding(
                 x, energy_target, src_mask, e_control
             )
             x = x + energy_embedding
@@ -135,12 +134,12 @@ class VarianceAdaptor(nn.Module):
             mel_mask = get_mask_from_lengths(mel_len)
 
         if self.pitch_feature_level == "frame_level":
-            pitch_prediction, pitch_confidence, pitch_embedding = self.get_pitch_embedding(
+            pitch_prediction, pitch_embedding = self.get_pitch_embedding(
                 x, pitch_target, mel_mask, p_control
             )
             x = x + pitch_embedding
         if self.energy_feature_level == "frame_level":
-            energy_prediction, energy_confidence, energy_embedding = self.get_energy_embedding(
+            energy_prediction, energy_embedding = self.get_energy_embedding(
                 x, energy_target, mel_mask, e_control
             )
             x = x + energy_embedding
@@ -152,10 +151,7 @@ class VarianceAdaptor(nn.Module):
             log_duration_prediction,
             duration_rounded,
             mel_len,
-            mel_mask,
-            pitch_confidence,
-            energy_confidence,
-            log_duration_confidence
+            mel_mask
         )
 
 
@@ -168,7 +164,7 @@ class VarianceAdaptorWithReference(nn.Module):
             setattr(self, key, value)
 
     def get_pitch_embedding(self, x, target, mask, control):
-        prediction, confidence = self.pitch_predictor(x, mask)
+        prediction = self.pitch_predictor(x, mask)
         if target is not None:
             embedding = self.pitch_embedding(torch.bucketize(target, self.pitch_bins))
         else:
@@ -176,10 +172,10 @@ class VarianceAdaptorWithReference(nn.Module):
             embedding = self.pitch_embedding(
                 torch.bucketize(prediction, self.pitch_bins)
             )
-        return prediction, confidence, embedding
+        return prediction, embedding
 
     def get_energy_embedding(self, x, target, mask, control):
-        prediction, confidence = self.energy_predictor(x, mask)
+        prediction = self.energy_predictor(x, mask)
         if target is not None:
             embedding = self.energy_embedding(
                 torch.bucketize(target, self.energy_bins)
@@ -189,7 +185,7 @@ class VarianceAdaptorWithReference(nn.Module):
             embedding = self.energy_embedding(
                 torch.bucketize(prediction, self.energy_bins)
             )
-        return prediction, confidence, embedding
+        return prediction, embedding
 
     def forward(
         self,
@@ -206,14 +202,14 @@ class VarianceAdaptorWithReference(nn.Module):
         d_control=1.0,
     ):
 
-        log_duration_prediction, log_duration_confidence = self.duration_predictor(x, src_mask)
+        log_duration_prediction = self.duration_predictor(x, src_mask)
         if self.pitch_feature_level == "phoneme_level":
-            pitch_prediction, pitch_confidence, pitch_embedding = self.get_pitch_embedding(
+            pitch_prediction, pitch_embedding = self.get_pitch_embedding(
                 reference, pitch_target, src_mask, p_control
             )
             x = x + pitch_embedding
         if self.energy_feature_level == "phoneme_level":
-            energy_prediction, energy_confidence, energy_embedding = self.get_energy_embedding(
+            energy_prediction, energy_embedding = self.get_energy_embedding(
                 reference, energy_target, src_mask, e_control
             )
             x = x + energy_embedding
@@ -230,12 +226,12 @@ class VarianceAdaptorWithReference(nn.Module):
             mel_mask = get_mask_from_lengths(mel_len)
 
         if self.pitch_feature_level == "frame_level":
-            pitch_prediction, pitch_confidence, pitch_embedding = self.get_pitch_embedding(
+            pitch_prediction, pitch_embedding = self.get_pitch_embedding(
                 reference, pitch_target, mel_mask, p_control
             )
             x = x + pitch_embedding
         if self.energy_feature_level == "frame_level":
-            energy_prediction, energy_confidence, energy_embedding = self.get_energy_embedding(
+            energy_prediction, energy_embedding = self.get_energy_embedding(
                 reference, energy_target, mel_mask, e_control
             )
             x = x + energy_embedding
@@ -247,10 +243,7 @@ class VarianceAdaptorWithReference(nn.Module):
             log_duration_prediction,
             duration_rounded,
             mel_len,
-            mel_mask,
-            pitch_confidence,
-            energy_confidence,
-            log_duration_confidence
+            mel_mask
         )
 
 
@@ -334,22 +327,16 @@ class VariancePredictor(nn.Module):
         )
 
         self.linear_layer = nn.Linear(self.conv_output_size, 1)
-        self.use_confidence = model_config["variance_predictor"]["confidence"]
-        if self.use_confidence:
-            self.confidence_estimator = nn.Linear(self.conv_output_size, 1)
 
     def forward(self, encoder_output, mask):
         out = self.conv_layer(encoder_output)
         out = self.linear_layer(out)
-        confidence = None
-        if self.use_confidence:
-            confidence = self.confidence_estimator(out)
         out = out.squeeze(-1)
 
         if mask is not None:
             out = out.masked_fill(mask, 0.0)
 
-        return out, confidence
+        return out
 
 
 class Conv(nn.Module):

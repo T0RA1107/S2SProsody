@@ -18,10 +18,7 @@ SpeechPrediction = namedtuple("SpeechPrediction", [
     "src_masks",
     "mel_masks",
     "src_lens",
-    "mel_lens",
-    "pitch_confidence",
-    "energy_confidence",
-    "log_duration_confidence"
+    "mel_lens"
 ])
 
 
@@ -93,9 +90,6 @@ class FastSpeech2(nn.Module):
             d_rounded,
             mel_lens,
             mel_masks,
-            pitch_confidence,
-            energy_confidence,
-            log_duration_confidence
         ) = self.variance_adaptor(
             output,
             src_masks,
@@ -125,7 +119,4 @@ class FastSpeech2(nn.Module):
             mel_masks,
             src_lens,
             mel_lens,
-            pitch_confidence,
-            energy_confidence,
-            log_duration_confidence
         )

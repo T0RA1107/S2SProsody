@@ -21,9 +21,6 @@ SpeechPrediction = namedtuple("SpeechPrediction", [
     "src_lens",
     "mel_lens",
     "weight_sign",
-    "pitch_confidence",
-    "energy_confidence",
-    "log_duration_confidence"
 ])
 
 
@@ -112,9 +109,6 @@ class Sign2Speech(FastSpeech2):
                 d_rounded,
                 mel_lens,
                 mel_masks,
-                pitch_confidence,
-                energy_confidence,
-                log_duration_confidence
             ) = self.variance_adaptor(
                 output,
                 prosody_embedding,
@@ -137,9 +131,6 @@ class Sign2Speech(FastSpeech2):
                 d_rounded,
                 mel_lens,
                 mel_masks,
-                pitch_confidence,
-                energy_confidence,
-                log_duration_confidence
             ) = self.variance_adaptor(
                 output,
                 output,
@@ -171,7 +162,4 @@ class Sign2Speech(FastSpeech2):
             src_lens,
             mel_lens,
             weight_sign,
-            pitch_confidence,
-            energy_confidence,
-            log_duration_confidence
         )
