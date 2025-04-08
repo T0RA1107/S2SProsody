@@ -8,6 +8,7 @@ import gc
 import torch
 import torch.utils
 from torch.utils.data import DataLoader
+from torch.nn.parallel import DistributedDataParallel
 import wandb
 from tqdm import tqdm
 
@@ -21,10 +22,10 @@ from libs.util.save_data import save_inference, save_metadata, save_validation_l
 # DDP
 import torch.distributed as dist
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 def main(args, configs, configs_ft):
+    torch.autograd.set_detect_anomaly(True)
+
     preprocess_config, model_config, train_config = configs
 
     # [Steup]
@@ -38,6 +39,7 @@ def main(args, configs, configs_ft):
         # on process, treat as the master process
         args.local_rank = 0
         distributed = False
+    device = torch.device(f"cuda:{args.local_rank}" if torch.cuda.is_available() else "cpu")
 
     # Ensure each process has the same initialization
     init_random_seeds(args.seed, args.local_rank)
@@ -78,13 +80,14 @@ def main(args, configs, configs_ft):
         model_config["speaker_num"] = dataset.speaker_num
     batch_size = train_config["optimizer"]["batch_size"]
     group_size = 4
+    num_workers = 2
     loader = DataLoader(
         dataset,
         batch_size=batch_size * group_size,
         shuffle=(sampler is None),
         sampler=sampler,
         collate_fn=dataset.collate_fn,
-        num_workers=8,
+        num_workers=num_workers,
         pin_memory=True
     )
     valid_loader = DataLoader(
@@ -93,7 +96,7 @@ def main(args, configs, configs_ft):
         shuffle=(sampler_valid is None),
         sampler=sampler_valid,
         collate_fn=valid_dataset.collate_fn,
-        num_workers=8,
+        num_workers=num_workers,
         pin_memory=True
     )
     inference_loader = DataLoader(
@@ -102,7 +105,7 @@ def main(args, configs, configs_ft):
         shuffle=(sampler_inference is None),
         sampler=sampler_inference,
         collate_fn=inference_dataset.collate_fn,
-        num_workers=8,
+        num_workers=num_workers,
         pin_memory=True
     )
 
@@ -110,9 +113,15 @@ def main(args, configs, configs_ft):
         args, preprocess_config, model_config, train_config,
         speaker_info=speaker_info, sign_info=sign_info,
         configs_ft=configs_ft, distributed=distributed)      # create a model given opt.model and other options
-    model.setup(train_config, len(loader) * group_size)               # regular setup: load and print networks; create schedulers
 
+    model.setup(train_config, len(loader) * group_size)               # regular setup: load and print networks; create schedulers
     vocoder = get_vocoder(model_config, device)
+    vocoder = DistributedDataParallel(
+            vocoder,
+            device_ids=[args.local_rank],
+            output_device=args.local_rank,
+            find_unused_parameters=True
+        )
 
     dt_now = datetime.datetime.now()
     run_name = dt_now.strftime("%m:%d:%H:%M")

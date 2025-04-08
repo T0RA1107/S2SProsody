@@ -90,6 +90,14 @@ class Sign2Speech(FastSpeech2):
         # Cross Attention with keypoint
         if key_point is not None:
             sign_embbeding = self.sign_processer(key_point)  # [B, C, T, V] -> [B, T, C]
+            if torch.isnan(sign_embbeding).any():
+                print("sign_processer")
+                for name, param in self.sign_processer.named_parameters():
+                    if torch.isnan(param).any():
+                        print(f"{name} has NaN values")
+                        break
+                else:
+                    print("internal algorithm cause NaN values")
             sign_embbeding = self.visual_project(sign_embbeding)
             output_crsattn = self.s2s_mixier(output, sign_embbeding)
             concat_prosody_embedding = torch.cat((output_crsattn.mean(dim=1), output.mean(dim=1)), dim=1)

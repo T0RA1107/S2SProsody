@@ -77,8 +77,9 @@ class SemiCycleGANModel(BaseModel):
             )
             if args.local_rank == 0:
                 print(f"Load {ckpt_path}")
-            ckpt = torch.load(ckpt_path)
-            if isinstance(self.netG_sign2audio, torch.nn.parallel.DistributedDataParallel):
+            ckpt = torch.load(ckpt_path, map_location="cpu")
+            # self.netG_sign2audio.load_state_dict(ckpt["model"], strict=False)
+            if distributed:
                 self.netG_sign2audio.module.load_state_dict(ckpt["model"], strict=False)
             else:
                 self.netG_sign2audio.load_state_dict(ckpt["model"], strict=False)
@@ -193,7 +194,7 @@ class SemiCycleGANModel(BaseModel):
         output_w_sign = TrainOutput(
             audio, self.real_sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
             pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
-            pred_prosody_label, pred.weight_sign)
+            pred_prosody_label, pred.weight_sign.detach().cpu())
 
         torch.cuda.empty_cache()
         return output_wo_sign, output_w_sign, speakers.detach().cpu().tolist()
@@ -300,7 +301,7 @@ class SemiCycleGANModel(BaseModel):
         output_w_sign = TrainOutput(
             audio, sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
             pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
-            sign_prosody_predictions, pred.weight_sign)
+            sign_prosody_predictions, pred.weight_sign.detach().cpu())
 
         # GAN Loss
         fake = output_w_sign.mels
@@ -402,6 +403,8 @@ class SemiCycleGANModel(BaseModel):
         self.set_train_mode()
         # forward
         output_wo_sign, output_w_sign, speakers = self.forward()      # compute fake images and reconstruction images.
+        print(f"w/o min: {output_wo_sign.mel_lens.min()}, max: {output_wo_sign.mel_lens.max()}, mean: {output_wo_sign.mel_lens.float().mean()}")
+        print(f"w/  min: {output_w_sign.mel_lens.min()}, max: {output_w_sign.mel_lens.max()}, mean: {output_w_sign.mel_lens.float().mean()}")
         # G_A and G_B
         self.set_requires_grad([self.netD_audio], False)  # Ds require no gradients when optimizing Gs
         self.optimizer_G.zero_grad(set_to_none=True)  # set G's gradients to zero

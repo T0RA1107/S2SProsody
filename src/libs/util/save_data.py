@@ -176,7 +176,7 @@ def save_metadata(n_gpus, output_dir, epoch):
 
 
 def save_validation_loss(model: SemiCycleGANModel, data_loader):
-    valid_loss_logs = {
+    valid_loss_logs: dict[str, list] = {
         "GAN loss/G (valid)": [],
         "prosody loss/v_loss (valid)": [],
         "prosody loss/a_loss (valid)": [],

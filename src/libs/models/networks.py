@@ -106,9 +106,9 @@ def init_net(net, args=None, distributed=False, init_type='normal', init_gain=0.
     """ Initialize a network: 1. register CPU/GPU device (with multi-GPU support); 2. initialize the network weights """
     if distributed:
         rank = args.local_rank
-        device = torch.device(f"cuda:{rank}")
-        net.to(device)
+        device = torch.device(rank)
         net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net)
+        net.to(device)
         net = DistributedDataParallel(
             net,
             device_ids=[rank],
@@ -116,7 +116,7 @@ def init_net(net, args=None, distributed=False, init_type='normal', init_gain=0.
             find_unused_parameters=True
         )
     else:
-        net.to(torch.device("cuda:0"))
+        net.to(torch.device(f"cuda:{rank}"))
     init_weights(net, args, init_type, init_gain=init_gain)
     return net
 

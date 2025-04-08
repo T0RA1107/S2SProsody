@@ -8,8 +8,6 @@ import numpy as np
 
 from libs.util.tool import get_mask_from_lengths, pad
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 class VarianceAdaptor(nn.Module):
     """Variance Adaptor"""
@@ -208,7 +206,7 @@ class VarianceAdaptorWithReference(nn.Module):
         d_control=1.0,
     ):
 
-        log_duration_prediction, log_duration_confidence = self.duration_predictor(reference, src_mask)
+        log_duration_prediction, log_duration_confidence = self.duration_predictor(x, src_mask)
         if self.pitch_feature_level == "phoneme_level":
             pitch_prediction, pitch_confidence, pitch_embedding = self.get_pitch_embedding(
                 reference, pitch_target, src_mask, p_control
@@ -275,7 +273,7 @@ class LengthRegulator(nn.Module):
         else:
             output = pad(output)
 
-        return output, torch.LongTensor(mel_len).to(device)
+        return output, torch.LongTensor(mel_len).to(output.device)
 
     def expand(self, batch, predicted):
         out = list()

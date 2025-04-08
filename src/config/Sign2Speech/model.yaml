@@ -14,6 +14,7 @@ variance_predictor:
   filter_size: 256
   kernel_size: 3
   dropout: 0.5
+  confidence: False
 
 variance_embedding:
   pitch_quantization: "linear" # support 'linear' or 'log', 'log' is allowed only if the pitch values are not normalized during preprocessing
@@ -50,4 +51,4 @@ max_seq_len: 5000
 vocoder:
   model: "HiFi-GAN" # support 'HiFi-GAN', 'MelGAN'
   speaker: "universal" # support  'LJSpeech', 'universal'
-  hifigan_path: "/home/aolab/Desktop/S2SProsody/src/libs/models/hifigan"
+  hifigan_path: "/home/ubuntu/slocal/S2SProsody/src/libs/models/hifigan"

@@ -1,10 +1,10 @@
 dataset: "VCTK"
 
 path:
-  corpus_path: "/data/VCTK-Corpus"
-  lexicon_path: "/data/VCTK-Corpus/processed/mfa_dict.txt"
-  raw_path: "/data/VCTK-Corpus/mfa_inputs"
-  preprocessed_path: "/data/VCTK-Corpus/preprocess"
+  corpus_path: "../data/VCTK-Corpus"
+  lexicon_path: "../data/VCTK-Corpus/processed/mfa_dict.txt"
+  raw_path: "../data/VCTK-Corpus/mfa_inputs"
+  preprocessed_path: "../data/VCTK-Corpus/preprocess"
 
 preprocessing:
   val_size: 512
@@ -30,9 +30,9 @@ preprocessing:
     normalization: True
 
 preprocessing_sign:
-  feat_path: "/data/OpenASL/data/mmpose"
-  label_path: "/data/OpenASL/data/openasl-v1.0.tsv"
-  translation_token_ids: "/data/OpenASL/data/translation_token_ids.txt"
+  feat_path: "../data/OpenASL/data/mmpose"
+  label_path: "../data/OpenASL/data/openasl-v1.0.tsv"
+  translation_token_ids: "../data/OpenASL/data/translation_token_ids.txt"
   eos_token: "."
   clip_length: 512
   prefix_dim: 2048

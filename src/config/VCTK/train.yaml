@@ -1,5 +1,5 @@
 path:
-  ckpt_path: "/home/aolab/Desktop/S2SProsody/output/FastSpeech2/ckpt/VCTK"
+  ckpt_path: "/home/ubuntu/slocal/S2SProsody/output/FastSpeech2/ckpt/VCTK"
   log_path: "./output/log/VCTK"
   result_path: "./output/result/VCTK"
 
@@ -21,7 +21,7 @@ dataset:
   serial_batches: False
 gpu_ids: [1]
 step:
-  total_step: 1000000 # 900000
+  total_step: 30 # 900000
   log_step: 100
   synth_step: 1000
   val_step: 1000
