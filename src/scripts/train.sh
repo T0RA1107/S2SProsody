@@ -10,6 +10,6 @@ CUDA_VISIBLE_DEVICES=0,1 OMP_NUM_THREADS=1 torchrun --nnodes=1 --nproc_per_node=
  --fine_tuning\
  --restore_step_ft 1000000\
  --use_wandb\
- --group "MoE"
-#  --save_ckpt
+ --group "MoE"\
+ --save_ckpt
 #  --without_save_wav

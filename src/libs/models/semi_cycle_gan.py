@@ -199,7 +199,7 @@ class SemiCycleGANModel(BaseModel):
         torch.cuda.empty_cache()
         return output_wo_sign, output_w_sign, speakers.detach().cpu().tolist()
 
-    def backward_D(self, output: TrainOutput):
+    def calc_D(self, output: TrainOutput):
         fake, fake_lens = self.fake_audio_pool.query(
             output.mels.unsqueeze(1).detach().cpu(),
             output.mel_lens.detach().cpu()
@@ -207,6 +207,8 @@ class SemiCycleGANModel(BaseModel):
         fake = fake.to(self.device, non_blocking=True)
 
         real = self.real_audio.mels.unsqueeze(1).float().to(self.device, non_blocking=True)
+        if real.dim() > 4:
+            real = real.squeeze(1)
         real_lens = self.real_audio.mel_lens
 
         clip_length = min(min(fake_lens), min(real_lens)) + 8
@@ -220,10 +222,14 @@ class SemiCycleGANModel(BaseModel):
         loss_D_real = self.criterionGAN(pred_real, True)
 
         loss_D = (loss_D_real + loss_D_fake) * 0.5
-        loss_D.backward()
-        loss_D = loss_D.detach().cpu()
         torch.cuda.empty_cache()
-        return { "GAN loss/D": loss_D }
+        return loss_D, { "GAN loss/D": loss_D.detach().cpu() }
+
+    def backward_D(self, output: TrainOutput):
+        loss_D, loss_log = self.calc_D(output)
+        loss_D.backward()
+        torch.cuda.empty_cache()
+        return loss_log
 
     def backward_G(self, output_wo_sign: TrainOutput, output_w_sign: TrainOutput, speakers):
         loss_log = dict()
@@ -260,7 +266,7 @@ class SemiCycleGANModel(BaseModel):
         loss_log["total"] = loss_G.detach().cpu()
 
         loss_G.backward()
-        
+
         # Output memo
         loss_log["output/weight_sign mean"] = output_w_sign.weight_sign.mean().detach().cpu()
         loss_log["output/weight_sign std"] = output_w_sign.weight_sign.std().detach().cpu()
@@ -398,29 +404,34 @@ class SemiCycleGANModel(BaseModel):
         torch.cuda.empty_cache()
         return output_wo_sign, output_w_sign, speakers.cpu().numpy()
 
-    def optimize_parameters(self):
+    def optimize_parameters(self, train_disc=True):
         loss_log = dict()
         self.set_train_mode()
         # forward
-        output_wo_sign, output_w_sign, speakers = self.forward()      # compute fake images and reconstruction images.
-        print(f"w/o min: {output_wo_sign.mel_lens.min()}, max: {output_wo_sign.mel_lens.max()}, mean: {output_wo_sign.mel_lens.float().mean()}")
-        print(f"w/  min: {output_w_sign.mel_lens.min()}, max: {output_w_sign.mel_lens.max()}, mean: {output_w_sign.mel_lens.float().mean()}")
-        # G_A and G_B
-        self.set_requires_grad([self.netD_audio], False)  # Ds require no gradients when optimizing Gs
-        self.optimizer_G.zero_grad(set_to_none=True)  # set G's gradients to zero
-        loss_log_G = self.backward_G(output_wo_sign, output_w_sign, speakers)             # calculate gradients for G
+        output_wo_sign, output_w_sign, speakers = self.forward()
+
+        # Generator's optimizing
+        self.set_requires_grad([self.netD_audio], False)
+        self.optimizer_G.zero_grad(set_to_none=True)
+        loss_log_G = self.backward_G(output_wo_sign, output_w_sign, speakers)
         loss_log.update(loss_log_G)
-        # G's optimizing
         nn.utils.clip_grad_norm_(self.netG_sign2audio.parameters(), self.grad_clip_thresh)
         nn.utils.clip_grad_norm_(self.netProsody_estimator.parameters(), self.grad_clip_thresh)
-        self.optimizer_G.step()       # update G's weights
-        if self.step == 0:
+        self.optimizer_G.step()
+        # Discriminator's optimizing
+        if random.random() < 0.5:
+            self.real_audio = output_wo_sign
+        if self.step == 0 and train_disc:
             self.set_requires_grad([self.netD_audio], True)
-            self.optimizer_D.zero_grad(set_to_none=True)   # set D's gradients to zero
-            self.loss_log_D = self.backward_D(output_w_sign)      # calculate gradients for D_audio
+            self.optimizer_D.zero_grad(set_to_none=True)
+            self.loss_log_D = self.backward_D(output_w_sign)
             nn.utils.clip_grad_norm_(self.netD_audio.parameters(), self.grad_clip_thresh)
-            self.optimizer_D.step()  # update D_A and D_B's weights
+            self.optimizer_D.step()
+        else:
+            with torch.no_grad():
+                _, self.loss_log_D = self.calc_D(output_w_sign)
         self.step = (self.step + 1) % 2
         loss_log.update(self.loss_log_D)
+        print(loss_log)
         torch.cuda.empty_cache()
         return loss_log

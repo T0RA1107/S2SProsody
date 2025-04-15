@@ -37,7 +37,7 @@ def get_norm_layer(norm_type='instance', dim=2):
     return norm_layer
 
 
-def get_scheduler(optimizer, train_config, train_data_size):
+def get_scheduler(optimizer, train_config, train_data_size, num_warmup_steps=None, num_training_steps=None):
     """Return a learning rate scheduler
 
     Parameters:
@@ -60,10 +60,15 @@ def get_scheduler(optimizer, train_config, train_data_size):
     elif train_config["GAN"]["lr_policy"] == 'plateau':
         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, threshold=0.01, patience=5)
     elif train_config["GAN"]["lr_policy"] == 'cosine':
+        if num_warmup_steps is None:
+            num_warmup_steps = train_config["optimizer"]["warm_up_step"]
+        if num_training_steps is None:
+            num_training_steps = train_data_size * train_config["step"]["total_step"]
         scheduler = get_cosine_schedule_with_warmup(
             optimizer,
-            num_warmup_steps=train_config["optimizer"]["warm_up_step"],
-            num_training_steps=train_data_size * train_config["step"]["total_step"])
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps)
+        setattr(scheduler, "T_0", num_training_steps)
     else:
         return NotImplementedError('learning rate policy [%s] is not implemented', train_config["GAN"]["lr_policy"])
     return scheduler
@@ -104,8 +109,8 @@ def init_weights(net, args=None, init_type='normal', init_gain=0.02):
 
 def init_net(net, args=None, distributed=False, init_type='normal', init_gain=0.02):
     """ Initialize a network: 1. register CPU/GPU device (with multi-GPU support); 2. initialize the network weights """
+    rank = args.local_rank
     if distributed:
-        rank = args.local_rank
         device = torch.device(rank)
         net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net)
         net.to(device)
@@ -239,7 +244,7 @@ class NLayerDiscriminator(nn.Module):
             norm_layer      -- normalization layer
         """
         super(NLayerDiscriminator, self).__init__()
-        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
+        if type(norm_layer) is functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
             use_bias = norm_layer == nn.InstanceNorm2d
@@ -288,14 +293,14 @@ class AudioDiscriminator(nn.Module):
             norm_layer      -- normalization layer
         """
         super(AudioDiscriminator, self).__init__()
-        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
+        if type(norm_layer) is functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
             use_bias = norm_layer == nn.InstanceNorm2d
 
         self.n_layers = n_layers
         sequence = [
-            nn.Conv2d(input_nc, ndf, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(input_nc, ndf, kernel_size=3, stride=2, padding=1),
             nn.LeakyReLU(0.2, True),
         ]
         nf_mult = 1
@@ -304,7 +309,7 @@ class AudioDiscriminator(nn.Module):
             nf_mult_prev = nf_mult
             nf_mult = min(2 ** n, 8)
             sequence += [
-                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=(4, 3), stride=(2, 1), padding=1, bias=use_bias),
+                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=(4, 3), stride=(2, 2), padding=1, bias=use_bias),
                 norm_layer(ndf * nf_mult),
                 nn.LeakyReLU(0.2, True),
             ]
@@ -342,21 +347,21 @@ class AudioProsodyDiscriminator(nn.Module):
             norm_layer      -- normalization layer
         """
         super(AudioProsodyDiscriminator, self).__init__()
-        if type(norm_layer) == functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
+        if type(norm_layer) is functools.partial:  # no need to use bias as BatchNorm2d has affine parameters
             use_bias = norm_layer.func == nn.InstanceNorm1d
         else:
             use_bias = norm_layer == nn.InstanceNorm1d
 
         kw = 3
         padw = 1
-        sequence = [nn.Conv1d(input_nc, ndf, kernel_size=kw, stride=1, padding=padw), nn.LeakyReLU(0.2, True)]
+        sequence = [nn.Conv1d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw), nn.LeakyReLU(0.2, True)]
         nf_mult = 1
         nf_mult_prev = 1
         for n in range(1, n_layers):  # gradually increase the number of filters
             nf_mult_prev = nf_mult
             nf_mult = min(2 ** n, 8)
             sequence += [
-                nn.Conv1d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias),
+                nn.Conv1d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias),
                 norm_layer(ndf * nf_mult),
                 nn.LeakyReLU(0.2, True)
             ]

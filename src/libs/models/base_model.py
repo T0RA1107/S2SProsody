@@ -25,7 +25,10 @@ class BaseModel:
 
     def setup(self, train_config, train_data_size):
         if self.isTrain:
-            self.schedulers = [networks.get_scheduler(optimizer, train_config, train_data_size) for optimizer in self.optimizers]
+            self.schedulers = [
+                networks.get_scheduler(self.optimizers[0], train_config, train_data_size),
+                networks.get_scheduler(self.optimizers[1], train_config, train_data_size, 0, train_config["optimizer"]["discriminator_epoch"] * train_data_size),
+            ]
 
     def set_train_mode(self):
         """Make models train mode"""
@@ -128,6 +131,8 @@ class BaseModel:
         """Update learning rates for all the networks; called at the end of every epoch"""
         for i, (name, scheduler) in enumerate(zip(self.model_names, self.schedulers)):
             old_lr = self.optimizers[i].param_groups[0]["lr"]
+            if scheduler.T_0 <= scheduler.last_epoch:
+                continue
             if self.train_config["GAN"]["lr_policy"] == "plateau":
                 scheduler.step(self.metric)
             else:

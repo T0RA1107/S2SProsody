@@ -116,12 +116,13 @@ def main(args, configs, configs_ft):
 
     model.setup(train_config, len(loader) * group_size)               # regular setup: load and print networks; create schedulers
     vocoder = get_vocoder(model_config, device)
-    vocoder = DistributedDataParallel(
-            vocoder,
-            device_ids=[args.local_rank],
-            output_device=args.local_rank,
-            find_unused_parameters=True
-        )
+    if distributed:
+        vocoder = DistributedDataParallel(
+                vocoder,
+                device_ids=[args.local_rank],
+                output_device=args.local_rank,
+                find_unused_parameters=True
+            )
 
     dt_now = datetime.datetime.now()
     run_name = dt_now.strftime("%m:%d:%H:%M")
@@ -167,7 +168,7 @@ def main(args, configs, configs_ft):
 
                 total_iters += batch_size * args.ngpus
                 model.set_input(batch)         # unpack data from dataset and apply preprocessing
-                loss_log = model.optimize_parameters()   # calculate loss functions, get gradients, update network weights
+                loss_log = model.optimize_parameters(epoch < train_config["optimizer"]["discriminator_epoch"])   # calculate loss functions, get gradients, update network weights
 
                 if args.local_rank == 0 and total_iters >= nxt_log_step:    # print training losses and save logging information to the disk
                     log = { "epoch": epoch }

@@ -16,6 +16,7 @@ optimizer:
   grad_clip_thresh: 1.0
   grad_acc_step: 1
   warm_up_step: 4000
+  discriminator_epoch: 5
 
 loss:
   prosody:
@@ -23,11 +24,11 @@ loss:
     bins: 32
     dist_loss_type: CELoss
   weight:
-    prosody: 1
-    regdist_mean: 0.1
+    prosody: 0.1
+    regdist_mean: 0.2
     regdist_var: 10
   PGR:
-    margin: 1.0
+    margin: 0.1
 
 discriminator:
   noise:
