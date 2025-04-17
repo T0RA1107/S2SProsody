@@ -7,7 +7,7 @@ from tqdm import tqdm
 import pandas as pd
 from g2p_en import G2p
 
-from .speech.text import text_to_sequence
+from libs.preprocessing.speech.text import text_to_sequence
 
 
 def read_lexicon(lex_path):
