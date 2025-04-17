@@ -9,7 +9,7 @@ import random
 from libs.util.audio_pool import AudioPool
 from .base_model import BaseModel
 from . import networks
-from .loss_fn.prosody_loss import ProsodyReconstructionLoss, ProsodyGuidedRegularizationLoss
+from .loss_fn.prosody_loss import ProsodyReconstructionLoss, ProsodyGuidedRegularizationLoss, IntonationRegularizationLoss
 from .sign2speech import Sign2Speech
 from .prosody_estimator import ProsodyDistEstimator1D
 
@@ -117,6 +117,7 @@ class SemiCycleGANModel(BaseModel):
             self.criterionGAN = networks.GANLoss(train_config["GAN"]["gan_mode"]).to(self.device, non_blocking=True)  # define GAN loss.
             self.criterionPR = ProsodyReconstructionLoss(train_config["loss"]["prosody"]["dist_loss_type"]).to(self.device, non_blocking=True)
             self.criterionRGR = ProsodyGuidedRegularizationLoss(sign_info, speaker_info, margin=train_config["loss"]["PGR"]["margin"]).to(self.device, non_blocking=True)
+            self.criterionIR = IntonationRegularizationLoss().to(self.device, non_blocking=True)
             train_parameters = []
             train_layers = ["sign_processer", "s2s_mixier", "visual_project"]
             for name, param in self.netG_sign2audio.named_parameters():
@@ -201,7 +202,7 @@ class SemiCycleGANModel(BaseModel):
 
     def calc_D(self, output: TrainOutput):
         fake, fake_lens = self.fake_audio_pool.query(
-            output.mels.unsqueeze(1).detach().cpu(),
+            output.mels.detach().unsqueeze(1).cpu(),
             output.mel_lens.detach().cpu()
             )
         fake = fake.to(self.device, non_blocking=True)
@@ -236,7 +237,7 @@ class SemiCycleGANModel(BaseModel):
 
         # GAN loss D_audio(G_sign2audio(sign))
         fake = output_w_sign.mels
-        clip_length = output_w_sign.mel_lens.min().detach().cpu() + 8
+        clip_length = output_w_sign.mel_lens.detach().min().cpu() + 8
         fake = random_clip_batch(fake, output_w_sign.mel_lens, clip_length)
 
         pred_fake = self.netD_audio(fake)
@@ -261,15 +262,25 @@ class SemiCycleGANModel(BaseModel):
         loss_log["Regularization/Energy mean"] = pgr_info.energy
         loss_log["Regularization/Pitch mean"] = pgr_info.pitch
 
+        # Intonation Regularization
+        loss_IR, ir_info = self.criterionIR(output_w_sign, output_wo_sign)
+        loss_log["Regularization/Energy intonation"] = ir_info.energy
+        loss_log["Regularization/Pitch intonation"] = ir_info.pitch
+
         # combined loss and calculate gradients
-        loss_G = loss_G_audio + loss_prosody * self.weight_prosody + loss_PGR * self.weight_regdist_mean
+        loss_G = loss_G_audio + loss_prosody * self.weight_prosody + loss_PGR * self.weight_regdist_mean + loss_IR
         loss_log["total"] = loss_G.detach().cpu()
 
         loss_G.backward()
 
         # Output memo
-        loss_log["output/weight_sign mean"] = output_w_sign.weight_sign.mean().detach().cpu()
-        loss_log["output/weight_sign std"] = output_w_sign.weight_sign.std().detach().cpu()
+        loss_log["output/weight_sign mean"] = output_w_sign.weight_sign.detach().mean().cpu()
+        loss_log["output/weight_sign std"] = output_w_sign.weight_sign.detach().std().cpu()
+
+        loss_log["output/pitch std (without sign)"]  = output_wo_sign.p_predictions.detach().std(dim=1).mean().cpu()
+        loss_log["output/energy std (without sign)"] = output_wo_sign.e_predictions.detach().std(dim=1).mean().cpu()
+        loss_log["output/pitch std (with sign)"]  = output_w_sign.p_predictions.detach().std(dim=1).mean().cpu()
+        loss_log["output/energy std (with sign)"] = output_w_sign.e_predictions.detach().std(dim=1).mean().cpu()
 
         torch.cuda.empty_cache()
         return loss_log
@@ -311,7 +322,7 @@ class SemiCycleGANModel(BaseModel):
 
         # GAN Loss
         fake = output_w_sign.mels
-        clip_length = output_w_sign.mel_lens.min().detach().cpu() + 8
+        clip_length = output_w_sign.mel_lens.detach().min().cpu() + 8
         fake = random_clip_batch(fake, output_w_sign.mel_lens, clip_length)
 
         pred_fake = self.netD_audio(fake)

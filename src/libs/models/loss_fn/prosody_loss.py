@@ -8,6 +8,7 @@ from einops import rearrange
 
 PRInfo = namedtuple("PRInfo", "v_loss a_loss total")
 PGRInfo = namedtuple("PGRInfo", "energy pitch")
+IRInfo = namedtuple("IRInfo", "energy pitch")
 
 
 def sinkhorn_log(r, c, cost_matrix, lambd=1.0, num_iters=100, eps=1e-8):
@@ -67,6 +68,7 @@ class ProsodyReconstructionLoss(nn.Module):
 
         loss_prosody_total = sum(loss_prosody) / 4.
         loss_log["prosody loss/total"] = loss_prosody_total.detach().cpu()
+        torch.cuda.empty_cache()
         return loss_prosody_total, PRInfo(sum(loss_prosody[:2]).detach().cpu() / 2., sum(loss_prosody[2:4]).detach().cpu() / 2., loss_prosody_total.detach().cpu())
 
 
@@ -114,4 +116,23 @@ class ProsodyGuidedRegularizationLoss(nn.Module):
         loss_reg_energy_mean = F.relu(torch.abs(energy_mean - velocity_hand_mean) - self.margin).mean()
         loss_reg_pitch_mean  = F.relu(torch.abs(pitch_mean  - velocity_face_mean) - self.margin).mean()
         loss_total = loss_reg_energy_mean + loss_reg_pitch_mean
+        torch.cuda.empty_cache()
         return loss_total, PGRInfo(loss_reg_energy_mean.detach().cpu(), loss_reg_pitch_mean.detach().cpu())
+
+
+class IntonationRegularizationLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, output_w_sign, output_wo_sign):
+        energy_std_w_sign = output_w_sign.e_predictions.std(dim=1)
+        pitch_std_w_sign = output_w_sign.p_predictions.std(dim=1)
+
+        energy_std_wo_sign = output_wo_sign.e_predictions.std(dim=1)
+        pitch_std_wo_sign = output_wo_sign.p_predictions.std(dim=1)
+
+        energy_IR = F.relu(energy_std_wo_sign - energy_std_w_sign).mean()
+        pitch_IR  = F.relu(pitch_std_wo_sign - pitch_std_w_sign).mean()
+        loss_total = energy_IR + pitch_IR
+        torch.cuda.empty_cache()
+        return loss_total, IRInfo(energy_IR.detach().cpu(), pitch_IR.detach().cpu())

@@ -126,7 +126,7 @@ def main(args, configs, configs_ft):
 
     dt_now = datetime.datetime.now()
     run_name = dt_now.strftime("%m:%d:%H:%M")
-    run_dir = f"./output/{run_name}/"
+    run_dir = f"../output/Sign2Speech/{run_name}/"
     if not args.without_save_wav:
         wav_dir = run_dir + "wavs/"
         if args.local_rank == 0:
