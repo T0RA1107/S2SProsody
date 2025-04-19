@@ -1,7 +1,6 @@
 from collections import namedtuple
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from libs.util.tool import get_mask_from_lengths
 from .modules.transformer.Models import S2SMixer
@@ -10,10 +9,12 @@ from .fastspeech2 import FastSpeech2
 from .visual_backbone import PartedPoseBackbone
 
 SpeechPrediction = namedtuple("SpeechPrediction", [
-    "output",
-    "postnet_output",
-    "p_predictions",
-    "e_predictions",
+    "mels_wo_sign",
+    "p_predictions_wo_sign",
+    "e_predictions_wo_sign",
+    "mels_w_sign",
+    "p_predictions_w_sign",
+    "e_predictions_w_sign",
     "log_d_predictions",
     "d_rounded",
     "src_masks",
@@ -49,20 +50,12 @@ class Sign2Speech(FastSpeech2):
             nn.Linear(self.dim_embedding, 1)
         )
 
-        self.speaker_text_embedding = None
-
     def forward(
         self,
         speakers,
         texts,
         src_lens,
         max_src_len,
-        mels=None,
-        mel_lens=None,
-        max_mel_len=None,
-        p_targets=None,
-        e_targets=None,
-        d_targets=None,
         p_control=1.0,
         e_control=1.0,
         d_control=1.0,
@@ -71,90 +64,69 @@ class Sign2Speech(FastSpeech2):
         if len(max_src_len.shape) > 0:
             max_src_len = max_src_len[0]
         src_masks = get_mask_from_lengths(src_lens, max_src_len)
-        mel_masks = (
-            get_mask_from_lengths(mel_lens, max_mel_len)
-            if mel_lens is not None
-            else None
-        )
-        output = self.encoder(texts, src_masks)
+        phoneme_embedding = self.encoder(texts, src_masks)
 
         if self.speaker_emb is not None:
-            output = output + self.speaker_emb(speakers).unsqueeze(1).expand(
+            phoneme_embedding = phoneme_embedding + self.speaker_emb(speakers).unsqueeze(1).expand(
                 -1, max_src_len, -1
             )
 
         weight_sign = None
-        # Cross Attention with keypoint
+        # Without Sign Path
+        with torch.no_grad():
+            (
+                output_wo_sign,
+                p_predictions_wo_sign,
+                e_predictions_wo_sign,
+                log_d_predictions,
+                d_rounded,
+                mel_lens,
+                mel_masks,
+            ) = self.variance_adaptor(
+                phoneme_embedding,
+                phoneme_embedding,
+                src_masks,
+                p_control=p_control,
+                e_control=e_control,
+                d_control=d_control,
+            )
+
+            output_wo_sign, mel_masks = self.decoder(output_wo_sign, mel_masks)
+            mels_wo_sign = self.mel_linear(output_wo_sign)
+
+            mels_wo_sign = self.postnet(mels_wo_sign) + mels_wo_sign
+        # With Sign Path
         if key_point is not None:
             sign_embbeding = self.sign_processer(key_point)  # [B, C, T, V] -> [B, T, C]
-            if torch.isnan(sign_embbeding).any():
-                print("sign_processer")
-                for name, param in self.sign_processer.named_parameters():
-                    if torch.isnan(param).any():
-                        print(f"{name} has NaN values")
-                        break
-                else:
-                    print("internal algorithm cause NaN values")
             sign_embbeding = self.visual_project(sign_embbeding)
-            output_crsattn = self.s2s_mixier(output, sign_embbeding)
-            concat_prosody_embedding = torch.cat((output_crsattn.mean(dim=1), output.mean(dim=1)), dim=1)
+            output_crsattn = self.s2s_mixier(phoneme_embedding, sign_embbeding)
+            concat_prosody_embedding = torch.cat((output_crsattn.mean(dim=1), phoneme_embedding.mean(dim=1)), dim=1)
             weight_sign = torch.sigmoid(self.MoE(concat_prosody_embedding)).unsqueeze(2)
-            prosody_embedding = weight_sign * output_crsattn + (1 - weight_sign) * output
+            prosody_embedding = weight_sign * output_crsattn + (1 - weight_sign) * phoneme_embedding
 
             (
-                output,
-                p_predictions,
-                e_predictions,
-                log_d_predictions,
-                d_rounded,
-                mel_lens,
-                mel_masks,
+                output_w_sign, p_predictions_w_sign, e_predictions_w_sign, *_
             ) = self.variance_adaptor(
-                output,
+                phoneme_embedding,
                 prosody_embedding,
                 src_masks,
-                mel_masks,
-                max_mel_len,
-                p_targets,
-                e_targets,
-                d_targets,
-                p_control,
-                e_control,
-                d_control,
+                duration_target=d_rounded,
+                p_control=p_control,
+                e_control=e_control,
+                d_control=d_control,
             )
-        else:
-            (
-                output,
-                p_predictions,
-                e_predictions,
-                log_d_predictions,
-                d_rounded,
-                mel_lens,
-                mel_masks,
-            ) = self.variance_adaptor(
-                output,
-                output,
-                src_masks,
-                mel_masks,
-                max_mel_len,
-                p_targets,
-                e_targets,
-                d_targets,
-                p_control,
-                e_control,
-                d_control,
-            )
+            output_w_sign, _ = self.decoder(output_w_sign, mel_masks)
+            mels_w_sign = self.mel_linear(output_w_sign)
 
-        output, mel_masks = self.decoder(output, mel_masks)
-        output = self.mel_linear(output)
-
-        postnet_output = self.postnet(output) + output
+            mels_w_sign = self.postnet(mels_w_sign) + mels_w_sign
 
         return SpeechPrediction(
-            output,
-            postnet_output,
-            p_predictions,
-            e_predictions,
+            mels_wo_sign,
+            p_predictions_wo_sign,
+            e_predictions_wo_sign,
+            mels_w_sign,
+            p_predictions_w_sign,
+            e_predictions_w_sign,
             log_d_predictions,
             d_rounded,
             src_masks,
