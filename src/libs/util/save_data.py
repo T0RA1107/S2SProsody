@@ -5,10 +5,9 @@ import pandas as pd
 import soundfile as sf
 import matplotlib.pyplot as plt
 import torch
-import torch.utils
 import torch.nn.functional as F
 
-from libs.models import SemiCycleGANModel
+from libs.models import SemiCycleGANModelWrapper
 from .model import vocoder_infer
 from .tool import expand, calc_normed_params
 
@@ -88,11 +87,11 @@ def plot_sign_prosody_dist(sign_prosody_label, sign_prosody_predictions, energy_
         plt.close()
 
 
-def save_inference(model: SemiCycleGANModel, vocoder, data_loader,
+def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader,
                    local_rank, sampling_rate, stats,
                    output_dir, epoch, model_config, preprocess_config, vid2gender,
                    need_prosody_dist=True):
-    model.set_eval_mode()
+    model_wrapper.model.set_eval_mode()
     save_wav_dir = os.path.join(output_dir, "wavs", str(epoch))
     save_dist_dir = os.path.join(output_dir, "dists", str(epoch))
     save_mel_dir = os.path.join(output_dir, "mels", str(epoch))
@@ -104,11 +103,11 @@ def save_inference(model: SemiCycleGANModel, vocoder, data_loader,
     name_list = []
     text_list = []
     l2_list = []
-    sign_info = model.sign_info
+    sign_info = model_wrapper.model.sign_info
     for batchs in data_loader:
         for batch in batchs:
-            output_wo_sign, output_w_sign, speakers = model.inference(batch, vid2gender, estimateProsody=need_prosody_dist)
-            energy_mean, pitch_mean = calc_normed_params(output_w_sign, model.speaker_info, speakers)
+            output_wo_sign, output_w_sign, speakers = model_wrapper.inference(batch, vid2gender, estimateProsody=need_prosody_dist)
+            energy_mean, pitch_mean = calc_normed_params(output_w_sign, model_wrapper.model.speaker_info, speakers)
             bs = output_wo_sign.mels.shape[0]
             for i in range(bs):
                 # without sign
@@ -175,7 +174,7 @@ def save_metadata(n_gpus, output_dir, epoch):
     metadata.to_csv(os.path.join(save_metadata_dir, f"{epoch}.tsv"), sep="\t", index=False)
 
 
-def save_validation_loss(model: SemiCycleGANModel, data_loader):
+def save_validation_loss(model_wrapper: SemiCycleGANModelWrapper, data_loader):
     valid_loss_logs: dict[str, list] = {
         "GAN loss/G (valid)": [],
         "prosody loss/v_loss (valid)": [],
@@ -186,7 +185,7 @@ def save_validation_loss(model: SemiCycleGANModel, data_loader):
     }
     for batchs in data_loader:
         for batch in batchs:
-            loss_log = model.validate(batch)
+            loss_log = model_wrapper.validate(batch)
             for key, val in loss_log.items():
                 valid_loss_logs[key].append(val)
 

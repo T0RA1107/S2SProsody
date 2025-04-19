@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from libs.util.model import get_vocoder
 
-from libs.models import SemiCycleGANModel
+from libs.models import SemiCycleGANModel, SemiCycleGANModelWrapper
 from datasets import UnpairedAudioSignDataset, SignDataset
 from libs.util.tool import init_random_seeds
 from libs.util.save_data import save_inference, save_metadata, save_validation_loss
@@ -115,6 +115,7 @@ def main(args, configs, configs_ft):
         configs_ft=configs_ft, distributed=distributed)      # create a model given opt.model and other options
 
     model.setup(train_config, len(loader) * group_size)               # regular setup: load and print networks; create schedulers
+    model_wrapper = SemiCycleGANModelWrapper(model)
     vocoder = get_vocoder(model_config, device)
     if distributed:
         vocoder = DistributedDataParallel(
@@ -185,7 +186,7 @@ def main(args, configs, configs_ft):
         if args.use_wandb:
             if distributed:
                 torch.distributed.barrier()
-            valid_loss_log = save_validation_loss(model, valid_loader)
+            valid_loss_log = save_validation_loss(model_wrapper, valid_loader)
             valid_loss_logs = { key: [torch.zeros_like(val).to(args.local_rank) for _ in range(args.ngpus)] if args.local_rank == 0 else None for key, val in valid_loss_log.items() }
             for key, val in valid_loss_log.items():
                 if distributed:
@@ -203,7 +204,7 @@ def main(args, configs, configs_ft):
         if not args.without_save_wav:
             if distributed:
                 torch.distributed.barrier()
-            save_inference(model, vocoder, inference_loader, args.local_rank, sampling_rate, stats, wav_dir, epoch, model_config, preprocess_config, inference_dataset.partial_vid2gender)
+            save_inference(model_wrapper, vocoder, inference_loader, args.local_rank, sampling_rate, stats, wav_dir, epoch, model_config, preprocess_config, inference_dataset.partial_vid2gender)
             if distributed:
                 torch.distributed.barrier()
             if args.local_rank == 0:
