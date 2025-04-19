@@ -193,6 +193,11 @@ class S2SMixer(nn.Module):
         self.max_seq_len = config["s2sMixer"]["max_seq_len"]
         self.d_model = d_model
 
+        self.position_enc = nn.Parameter(
+            get_sinusoid_encoding_table(n_position, d_word_vec).unsqueeze(0),
+            requires_grad=False,
+        )
+
         self.layer_stack = nn.ModuleList(
             [
                 FFTBlockCrossAttention(
@@ -217,7 +222,9 @@ class S2SMixer(nn.Module):
         else:
             max_len = min(max_len, self.max_seq_len)
 
-            dec_output = enc_seq[:, :max_len, :]
+            dec_output = enc_seq[:, :max_len, :] + self.position_enc[
+                :, :max_len, :
+            ].expand(batch_size, -1, -1)
 
         for dec_layer in self.layer_stack:
             dec_output, dec_slf_attn = dec_layer(

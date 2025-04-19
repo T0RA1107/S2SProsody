@@ -71,7 +71,6 @@ class Sign2Speech(FastSpeech2):
                 -1, max_src_len, -1
             )
 
-        weight_sign = None
         # Without Sign Path
         with torch.no_grad():
             (
@@ -95,11 +94,14 @@ class Sign2Speech(FastSpeech2):
             mels_wo_sign = self.mel_linear(output_wo_sign)
 
             mels_wo_sign = self.postnet(mels_wo_sign) + mels_wo_sign
+
         # With Sign Path
+        mels_w_sign = p_predictions_w_sign = e_predictions_w_sign = weight_sign = None
         if key_point is not None:
             sign_embbeding = self.sign_processer(key_point)  # [B, C, T, V] -> [B, T, C]
             sign_embbeding = self.visual_project(sign_embbeding)
             output_crsattn = self.s2s_mixier(phoneme_embedding, sign_embbeding)
+
             concat_prosody_embedding = torch.cat((output_crsattn.mean(dim=1), phoneme_embedding.mean(dim=1)), dim=1)
             weight_sign = torch.sigmoid(self.MoE(concat_prosody_embedding)).unsqueeze(2)
             prosody_embedding = weight_sign * output_crsattn + (1 - weight_sign) * phoneme_embedding
