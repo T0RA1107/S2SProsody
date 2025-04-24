@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import json
 from collections import OrderedDict
 
@@ -33,9 +33,7 @@ class VarianceAdaptor(nn.Module):
         n_bins = model_config["variance_embedding"]["n_bins"]
         assert pitch_quantization in ["linear", "log"]
         assert energy_quantization in ["linear", "log"]
-        with open(
-            os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
-        ) as f:
+        with Path(preprocess_config["path"]["preprocessed_path"], "stats.json").open() as f:
             stats = json.load(f)
             pitch_min, pitch_max = stats["pitch"][:2]
             energy_min, energy_max = stats["energy"][:2]

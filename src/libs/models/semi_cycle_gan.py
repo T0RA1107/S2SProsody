@@ -1,9 +1,11 @@
-import torch
-import torch.nn as nn
-import os
+from pathlib import Path
 from collections import namedtuple
 import json
 import random
+from logging import getLogger
+
+import torch
+import torch.nn as nn
 
 from libs.util.audio_pool import AudioPool
 from .base_model import BaseModel
@@ -12,6 +14,7 @@ from .loss_fn.prosody_loss import ProsodyReconstructionLoss, ProsodyGuidedRegula
 from .sign2speech import Sign2Speech
 from .prosody_estimator import ProsodyDistEstimator1D
 
+logger = getLogger(__name__)
 
 TrainOutput = namedtuple("TrainOutput", [
     "mels",
@@ -70,12 +73,11 @@ class SemiCycleGANModel(BaseModel):
 
         if configs_ft is not None:
             train_config_ft = configs_ft[2]
-            ckpt_path = os.path.join(
+            ckpt_path = Path(
                 train_config_ft["path"]["ckpt_path"],
-                "{}.pth.tar".format(args.restore_step_ft),
-            )
+                "{}.pth.tar".format(args.restore_step_ft))
             if args.local_rank == 0:
-                print(f"Load {ckpt_path}")
+                logger.info(f"Load {ckpt_path.as_posix()}")
             ckpt = torch.load(ckpt_path, map_location="cpu")
             # self.netG_sign2audio.load_state_dict(ckpt["model"], strict=False)
             if distributed:
@@ -84,7 +86,7 @@ class SemiCycleGANModel(BaseModel):
                 self.netG_sign2audio.load_state_dict(ckpt["model"], strict=False)
 
         # speaker info
-        with open(os.path.join(preprocess_config["path"]["preprocessed_path"], "speakers.json")) as f:
+        with Path(preprocess_config["path"]["preprocessed_path"], "speakers.json").open() as f:
             self.speaker_map = json.load(f)
         self.target_speakers = model_config["speaker"]["target"]
         self.all_speakers = list(speaker_info["energy"]["mean"].keys())
@@ -213,7 +215,7 @@ class SemiCycleGANModel(BaseModel):
 
         loss_D = (loss_D_real + loss_D_fake) * 0.5
         torch.cuda.empty_cache()
-        return loss_D, { "GAN loss/D": loss_D.detach().cpu() }
+        return loss_D, { "GAN loss/D": loss_D.detach().cpu().item() }
 
     def backward_D(self, output: TrainOutput):
         loss_D, loss_log = self.calc_D(output)
@@ -252,14 +254,14 @@ class SemiCycleGANModel(BaseModel):
             "prosody loss/total": pr_info_w_sign.total, "prosody loss without sign/total": pr_info_wo_sign.total,
             "Regularization/Energy mean": pgr_info.energy, "Regularization/Pitch mean": pgr_info.pitch,
             "Regularization/Energy intonation": ir_info.energy, "Regularization/Pitch intonation": ir_info.pitch,
-            "GAN loss/G": loss_G_audio.detach().cpu(), "total": loss_G.detach().cpu(),
+            "GAN loss/G": loss_G_audio.detach().cpu().item(), "total": loss_G.detach().cpu().item(),
             # Output memo
-            "output/weight_sign mean": output_w_sign.weight_sign.detach().mean().cpu(),
-            "output/weight_sign std": output_w_sign.weight_sign.detach().std().cpu(),
-            "output/pitch std (without sign)": output_wo_sign.p_predictions.detach().std(dim=1).mean().cpu(),
-            "output/energy std (without sign)": output_wo_sign.e_predictions.detach().std(dim=1).mean().cpu(),
-            "output/pitch std (with sign)": output_w_sign.p_predictions.detach().std(dim=1).mean().cpu(),
-            "output/energy std (with sign)": output_w_sign.e_predictions.detach().std(dim=1).mean().cpu(),
+            "output/weight_sign mean": output_w_sign.weight_sign.detach().mean().cpu().item(),
+            "output/weight_sign std": output_w_sign.weight_sign.detach().std().cpu().item(),
+            "output/pitch std (without sign)": output_wo_sign.p_predictions.detach().std(dim=1).mean().cpu().item(),
+            "output/energy std (without sign)": output_wo_sign.e_predictions.detach().std(dim=1).mean().cpu().item(),
+            "output/pitch std (with sign)": output_w_sign.p_predictions.detach().std(dim=1).mean().cpu().item(),
+            "output/energy std (with sign)": output_w_sign.e_predictions.detach().std(dim=1).mean().cpu().item(),
         }
 
         torch.cuda.empty_cache()
@@ -293,6 +295,5 @@ class SemiCycleGANModel(BaseModel):
                 _, self.loss_log_D = self.calc_D(output_w_sign)
         self.step = (self.step + 1) % 2
         loss_log.update(self.loss_log_D)
-        print(loss_log)
         torch.cuda.empty_cache()
         return loss_log

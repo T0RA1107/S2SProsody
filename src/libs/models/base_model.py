@@ -1,7 +1,10 @@
 from collections import OrderedDict
+from logging import getLogger
 import torch
 
 from . import networks
+
+logger = getLogger(__name__)
 
 
 class BaseModel:
@@ -15,7 +18,6 @@ class BaseModel:
         self.local_rank = args.local_rank
         self.dist = args.ngpus > 1
         self.device = torch.device(f"cuda:{args.local_rank}") if args.ngpus > 0 else torch.device("cpu")  # get device name: CPU or GPU
-        self.save_dir = train_config["path"]["ckpt_path"]  # save all the checkpoints to save_dir
         torch.backends.cudnn.benchmark = True
         self.loss_names = []
         self.model_names = []
@@ -115,7 +117,7 @@ class BaseModel:
         Parameters:
             verbose (bool) -- if verbose: print the network architecture
         """
-        print("---------- Networks initialized -------------")
+        logger.debug("---------- Networks initialized -------------")
         for name in self.model_names:
             if isinstance(name, str):
                 net = getattr(self, "net" + name)
@@ -123,9 +125,9 @@ class BaseModel:
                 for param in net.parameters():
                     num_params += param.numel()
                 if verbose:
-                    print(net)
-                print("[Network %s] Total number of parameters : %.3f M" % (name, num_params / 1e6))
-        print("-----------------------------------------------")
+                    logger.debug(net)
+                logger.debug("[Network %s] Total number of parameters : %.3f M" % (name, num_params / 1e6))
+        logger.debug("-----------------------------------------------")
 
     def update_learning_rate(self):
         """Update learning rates for all the networks; called at the end of every epoch"""
@@ -143,7 +145,7 @@ class BaseModel:
         lr_dict = dict()
         for i, name in enumerate(self.model_names):
             lr = self.optimizers[i].param_groups[0]["lr"]
-            lr_dict[name] = lr
+            lr_dict["lr/" + name] = lr
         return lr_dict
 
     def set_requires_grad(self, nets, requires_grad=False):

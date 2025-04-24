@@ -69,7 +69,7 @@ class ProsodyReconstructionLoss(nn.Module):
         loss_prosody_total = sum(loss_prosody) / 4.
         loss_log["prosody loss/total"] = loss_prosody_total.detach().cpu()
         torch.cuda.empty_cache()
-        return loss_prosody_total, PRInfo(sum(loss_prosody[:2]).detach().cpu() / 2., sum(loss_prosody[2:4]).detach().cpu() / 2., loss_prosody_total.detach().cpu())
+        return loss_prosody_total, PRInfo(sum(loss_prosody[:2]).detach().cpu().item() / 2., sum(loss_prosody[2:4]).detach().cpu().item() / 2., loss_prosody_total.detach().cpu().item())
 
 
 class ProsodyGuidedRegularizationLoss(nn.Module):
@@ -117,7 +117,7 @@ class ProsodyGuidedRegularizationLoss(nn.Module):
         loss_reg_pitch_mean  = F.relu(torch.abs(pitch_mean  - velocity_face_mean) - self.margin).mean()
         loss_total = loss_reg_energy_mean + loss_reg_pitch_mean
         torch.cuda.empty_cache()
-        return loss_total, PGRInfo(loss_reg_energy_mean.detach().cpu(), loss_reg_pitch_mean.detach().cpu())
+        return loss_total, PGRInfo(loss_reg_energy_mean.detach().cpu().item(), loss_reg_pitch_mean.detach().cpu().item())
 
 
 class IntonationRegularizationLoss(nn.Module):
@@ -135,4 +135,4 @@ class IntonationRegularizationLoss(nn.Module):
         pitch_IR  = F.relu(pitch_std_wo_sign - pitch_std_w_sign).mean()
         loss_total = energy_IR + pitch_IR
         torch.cuda.empty_cache()
-        return loss_total, IRInfo(energy_IR.detach().cpu(), pitch_IR.detach().cpu())
+        return loss_total, IRInfo(energy_IR.detach().cpu().item(), pitch_IR.detach().cpu().item())

@@ -1,8 +1,7 @@
-import os
+from pathlib import Path
 import json
 
 import torch
-import torch.nn as nn
 import numpy as np
 
 from libs.models import hifigan, FastSpeech2, networks
@@ -15,11 +14,10 @@ def get_model(args, configs, distributed, train=False):
     model = FastSpeech2(preprocess_config, model_config)
     model = networks.init_net(model, args, distributed)
     if args.restore_step:
-        ckpt_path = os.path.join(
+        ckpt_path = Path(
             train_config["path"]["ckpt_path"],
             "{}.pth.tar".format(args.restore_step),
         )
-        print(ckpt_path)
         ckpt = torch.load(ckpt_path)
         if isinstance(model, torch.nn.parallel.DistributedDataParallel):
             model.module.load_state_dict(ckpt["model"], strict=False)

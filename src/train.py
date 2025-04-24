@@ -1,9 +1,10 @@
 import argparse
-import os
 import datetime
 import yaml
 import json
 import gc
+from pathlib import Path
+from logging import getLogger, basicConfig, DEBUG, INFO
 
 import torch
 import torch.utils
@@ -12,21 +13,34 @@ from torch.nn.parallel import DistributedDataParallel
 import wandb
 from tqdm import tqdm
 
-from libs.util.model import get_vocoder
-
 from libs.models import SemiCycleGANModel, SemiCycleGANModelWrapper
 from datasets import UnpairedAudioSignDataset, SignDataset
+from libs.util.model import get_vocoder
 from libs.util.tool import init_random_seeds
 from libs.util.save_data import save_inference, save_metadata, save_validation_loss
+from libs.util.logger import TrainLogger
 
 # DDP
 import torch.distributed as dist
 
+logger = getLogger(__name__)
+
 
 def main(args, configs, configs_ft):
-    torch.autograd.set_detect_anomaly(True)
-
+    # torch.autograd.set_detect_anomaly(True)
     preprocess_config, model_config, train_config = configs
+
+    dt_now = datetime.datetime.now()
+    run_name = dt_now.strftime("%m:%d:%H:%M")
+    result_dir = Path(train_config["path"]["result_path"], run_name)
+    result_dir.mkdir(exist_ok=True)
+    basicConfig(
+        level=DEBUG if args.debug else INFO,
+        format="[%(asctime)s] %(name)s %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        filename=result_dir / "train.log",
+    )
+    train_logger = TrainLogger(result_dir)
 
     # [Steup]
     if args.ngpus > 1:
@@ -47,8 +61,8 @@ def main(args, configs, configs_ft):
     dataset = UnpairedAudioSignDataset(
         "train.txt", preprocess_config, train_config, model_config, args.local_rank)  # create a dataset given opt.dataset_mode and other options
     if args.local_rank == 0:
-        print("Audio Size:", dataset.audio_size)
-        print("Sign  Size:", dataset.sign_size)
+        logger.info(f"Audio Size: {dataset.audio_size}")
+        logger.info(f"Sign  Size: {dataset.sign_size}")
     valid_dataset = SignDataset(
         preprocess_config, train_config, args.local_rank,
         phase="train", split="val"
@@ -59,9 +73,7 @@ def main(args, configs, configs_ft):
     )
     speaker_info = dataset.audio_dataset.get_speaker_info()
     sign_info = dataset.sign_dataset.get_sign_prosody_info()
-    with open(
-        os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
-    ) as f:
+    with Path(preprocess_config["path"]["preprocessed_path"], "stats.json").open() as f:
         stats = json.load(f)
         stats = stats["pitch"] + stats["energy"][:2]
 
@@ -125,17 +137,16 @@ def main(args, configs, configs_ft):
                 find_unused_parameters=True
             )
 
-    dt_now = datetime.datetime.now()
-    run_name = dt_now.strftime("%m:%d:%H:%M")
-    run_dir = f"../output/Sign2Speech/{run_name}/"
+    output_dir = Path(train_config["path"]["output_path"], run_name)
     if not args.without_save_wav:
-        wav_dir = run_dir + "wavs/"
+        wav_dir = output_dir / "wavs"
         if args.local_rank == 0:
-            os.makedirs(run_dir, exist_ok=True)
-            os.makedirs(wav_dir, exist_ok=True)
+            output_dir.mkdir(exist_ok=True)
+            wav_dir.mkdir(exist_ok=True)
     if args.local_rank == 0 and args.save_ckpt:
-        os.makedirs(run_dir, exist_ok=True)
-        os.makedirs(run_dir + "ckpt", exist_ok=True)
+        output_dir.mkdir(exist_ok=True)
+        ckpt_dir = output_dir / "ckpt"
+        ckpt_dir.mkdir(exist_ok=True)
 
     if args.local_rank == 0 and args.use_wandb:
         wandb.init(
@@ -176,6 +187,7 @@ def main(args, configs, configs_ft):
                     lr_dict = model.get_learning_rate()
                     log.update(lr_dict)
                     log.update(loss_log)
+                    train_logger.update(log)
                     if args.use_wandb:
                         wandb.log(log)
                     nxt_log_step += log_step
@@ -183,24 +195,27 @@ def main(args, configs, configs_ft):
 
         if args.local_rank == 0:
             progress.update()
-        if args.use_wandb:
+        # validation
+        if distributed:
+            torch.distributed.barrier()
+        valid_loss_log = save_validation_loss(model_wrapper, valid_loader)
+        valid_loss_logs = { key: [torch.zeros_like(val).to(args.local_rank) for _ in range(args.ngpus)] if args.local_rank == 0 else None for key, val in valid_loss_log.items() }
+        for key, val in valid_loss_log.items():
             if distributed:
-                torch.distributed.barrier()
-            valid_loss_log = save_validation_loss(model_wrapper, valid_loader)
-            valid_loss_logs = { key: [torch.zeros_like(val).to(args.local_rank) for _ in range(args.ngpus)] if args.local_rank == 0 else None for key, val in valid_loss_log.items() }
-            for key, val in valid_loss_log.items():
-                if distributed:
-                    torch.distributed.gather(val.to(args.local_rank), gather_list=valid_loss_logs[key], dst=0)
-                else:
-                    valid_loss_logs[key][0] = valid_loss_log[key]
-            if args.local_rank == 0:
-                valid_loss_log = {
-                    key: torch.tensor([valid_loss_logs[key][i].cpu() for i in range(args.ngpus)]).mean()
-                    for key in valid_loss_log
-                }
+                torch.distributed.gather(val.to(args.local_rank), gather_list=valid_loss_logs[key], dst=0)
+            else:
+                valid_loss_logs[key][0] = valid_loss_log[key]
+        if args.local_rank == 0:
+            valid_loss_log = {
+                key: torch.tensor([valid_loss_logs[key][i].cpu() for i in range(args.ngpus)]).mean()
+                for key in valid_loss_log
+            }
+            if args.use_wandb:
                 wandb.log(valid_loss_log)
-            del valid_loss_log, valid_loss_logs
-            torch.cuda.empty_cache()
+            logger.info(valid_loss_log)
+        del valid_loss_log, valid_loss_logs
+        torch.cuda.empty_cache()
+        # save wav file
         if not args.without_save_wav:
             if distributed:
                 torch.distributed.barrier()
@@ -210,10 +225,10 @@ def main(args, configs, configs_ft):
             if args.local_rank == 0:
                 save_metadata(args.ngpus, wav_dir, epoch)
             torch.cuda.empty_cache()
+        # save model weight
         if args.local_rank == 0 and args.save_ckpt and (epoch + 1) % save_epochs == 0:
-            print(f"saving the latest model {epoch=}")
-            ckpt_save_path = run_dir + f"ckpt/{epoch}.pth"
-            model.save_networks(ckpt_save_path)
+            logger.info(f"saving the latest model {epoch=}")
+            model.save_networks((ckpt_dir / f"{epoch}.pth"))
         if distributed:
             torch.distributed.barrier()
         gc.collect()
@@ -234,6 +249,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "-t", "--train_config", type=str, required=True, help="path to train.yaml"
+    )
+    parser.add_argument(
+        "-d", "--debug", action="store_true"
     )
     # W & B related
     parser.add_argument(
@@ -264,20 +282,17 @@ if __name__ == "__main__":
 
     # Read Config
     preprocess_config = yaml.load(
-        open(args.preprocess_config, "r"), Loader=yaml.FullLoader
+        Path(args.preprocess_config).open(), Loader=yaml.FullLoader
     )
-    model_config = yaml.load(open(args.model_config, "r"), Loader=yaml.FullLoader)
-    train_config = yaml.load(open(args.train_config, "r"), Loader=yaml.FullLoader)
+    model_config = yaml.load(Path(args.model_config).open(), Loader=yaml.FullLoader)
+    train_config = yaml.load(Path(args.train_config).open(), Loader=yaml.FullLoader)
     configs = (preprocess_config, model_config, train_config)
     configs_ft = None
     if args.fine_tuning:
         ft_config_path = train_config["fine-tuning"]
-        preprocess_config_ft = yaml.load(open(
-            os.path.join(ft_config_path, "preprocess.yaml"), "r"), Loader=yaml.FullLoader)
-        model_config_ft = yaml.load(open(
-            os.path.join(ft_config_path, "model.yaml"), "r"), Loader=yaml.FullLoader)
-        train_config_ft = yaml.load(open(
-            os.path.join(ft_config_path, "train.yaml"), "r"), Loader=yaml.FullLoader)
+        preprocess_config_ft = yaml.load(Path(ft_config_path, "preprocess.yaml").open(), Loader=yaml.FullLoader)
+        model_config_ft = yaml.load(Path(ft_config_path, "model.yaml").open(), Loader=yaml.FullLoader)
+        train_config_ft = yaml.load(Path(ft_config_path, "train.yaml").open(), Loader=yaml.FullLoader)
         configs_ft = (preprocess_config_ft, model_config_ft, train_config_ft)
 
     main(args, configs, configs_ft)

@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import json
 from collections import namedtuple
 
@@ -40,12 +40,7 @@ class FastSpeech2(nn.Module):
 
         self.speaker_emb = None
         if model_config["multi_speaker"]:
-            with open(
-                os.path.join(
-                    preprocess_config["path"]["preprocessed_path"], "speakers.json"
-                ),
-                "r",
-            ) as f:
+            with Path(preprocess_config["path"]["preprocessed_path"], "speakers.json").open() as f:
                 n_speaker = len(json.load(f))
             self.speaker_emb = nn.Embedding(
                 n_speaker,

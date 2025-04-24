@@ -1,11 +1,10 @@
 import argparse
-import os
+from pathlib import Path
 import datetime
 import yaml
 import json
 
 import torch
-import torch.utils
 from torch.utils.data import DataLoader
 
 # from FastSpeech2.evaluate import evaluate
@@ -15,8 +14,6 @@ from libs.models.semi_cycle_gan import SemiCycleGANModel
 from datasets.dataset import AudioDataset, SignDataset
 from libs.util.save_data import save_inference
 
-# DDP
-import torch.distributed as dist
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -39,9 +36,7 @@ def main(args, configs, configs_ft):
     )
     speaker_info = audio_dataset.get_speaker_info()
     sign_info = train_dataset.get_sign_prosody_info()
-    with open(
-        os.path.join(preprocess_config["path"]["preprocessed_path"], "stats.json")
-    ) as f:
+    with Path(preprocess_config["path"]["preprocessed_path"], "stats.json").open() as f:
         stats = json.load(f)
         stats = stats["pitch"] + stats["energy"][:2]
 
@@ -70,11 +65,12 @@ def main(args, configs, configs_ft):
 
     dt_now = datetime.datetime.now()
     run_name = dt_now.strftime("%m:%d:%H:%M")
-    run_dir = f"./output/{run_name}/"
+    output_dir = Path(train_config["path"]["output_path"], run_name)
     if not args.without_save_wav:
-        wav_dir = run_dir + "wavs/"
-        os.makedirs(run_dir, exist_ok=True)
-        os.makedirs(wav_dir, exist_ok=True)
+        wav_dir = output_dir / "wavs"
+        if args.local_rank == 0:
+            output_dir.mkdir(exist_ok=True)
+            wav_dir.mkdir(exist_ok=True)
 
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
 

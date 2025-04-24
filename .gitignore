@@ -3,6 +3,7 @@ data
 src/.s2sprosody
 lib/*
 output
+result
 
 .ipynb_checkpoints
 .python-version

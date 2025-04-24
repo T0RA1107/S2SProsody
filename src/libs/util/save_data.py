@@ -1,6 +1,8 @@
-import os
+from pathlib import Path
+from typing import Tuple, Dict, Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import soundfile as sf
 import matplotlib.pyplot as plt
@@ -12,13 +14,13 @@ from .model import vocoder_infer
 from .tool import expand, calc_normed_params
 
 
-def plot_mel(data, stats, name):
+def plot_mel(data: Tuple[npt.NDArray[np.float32], ...], stats: Tuple[float, ...], name: str):
     fig, ax = plt.subplots()
     pitch_min, pitch_max, pitch_mean, pitch_std, energy_min, energy_max = stats
     pitch_min = pitch_min * pitch_std + pitch_mean
     pitch_max = pitch_max * pitch_std + pitch_mean
 
-    def add_axis(fig, old_ax):
+    def add_axis(fig: Any, old_ax: Any):
         ax = fig.add_axes(old_ax.get_position(), anchor="W")
         ax.set_facecolor("None")
         return ax
@@ -60,7 +62,10 @@ def plot_mel(data, stats, name):
     plt.close()
 
 
-def plot_sign_prosody_dist(sign_prosody_label, sign_prosody_predictions, energy_mean, pitch_mean, save_dir, name):
+def plot_sign_prosody_dist(
+    sign_prosody_label: npt.NDArray[np.float32],
+    sign_prosody_predictions: npt.NDArray[np.float32],
+    energy_mean: float, pitch_mean: float, save_dir: Path, name: str):
     label_type = ["v_hand", "v_face", "a_hand", "a_face"]
     n = sign_prosody_label.shape[-1]
     bins = np.linspace(0, 1, n + 1)
@@ -83,23 +88,23 @@ def plot_sign_prosody_dist(sign_prosody_label, sign_prosody_predictions, energy_
         if label == "v_face":
             plt.axvline(x=pitch_mean, color="green", linestyle=":", label="Pitch mean")
         plt.legend()
-        fig.savefig(os.path.join(save_dir, f"{label}|{name}.png"))
+        fig.savefig(save_dir / f"{label}|{name}.png")
         plt.close()
 
 
 def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader,
-                   local_rank, sampling_rate, stats,
-                   output_dir, epoch, model_config, preprocess_config, vid2gender,
-                   need_prosody_dist=True):
+                   local_rank: int, sampling_rate: int, stats: Tuple[float, ...],
+                   output_dir: Path, epoch: int, model_config: Dict[str, Any], preprocess_config: Dict[str, Any],
+                   vid2gender: Dict[str, str], need_prosody_dist: bool=True):
     model_wrapper.model.set_eval_mode()
-    save_wav_dir = os.path.join(output_dir, "wavs", str(epoch))
-    save_dist_dir = os.path.join(output_dir, "dists", str(epoch))
-    save_mel_dir = os.path.join(output_dir, "mels", str(epoch))
-    save_metadata_dir = os.path.join(output_dir, "metadata")
-    os.makedirs(save_wav_dir, exist_ok=True)
-    os.makedirs(save_mel_dir, exist_ok=True)
-    os.makedirs(save_dist_dir, exist_ok=True)
-    os.makedirs(save_metadata_dir, exist_ok=True)
+    save_wav_dir = output_dir / "wavs" / str(epoch)
+    save_dist_dir = output_dir / "dists" / str(epoch)
+    save_mel_dir = output_dir / "mels" / str(epoch)
+    save_metadata_dir = output_dir / "metadata"
+    save_wav_dir.mkdir(exist_ok=True)
+    save_mel_dir.mkdir(exist_ok=True)
+    save_dist_dir.mkdir(exist_ok=True)
+    save_metadata_dir.mkdir(exist_ok=True)
     name_list = []
     text_list = []
     l2_list = []
@@ -119,13 +124,13 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
                     model_config,
                     preprocess_config,
                 )[0]
-                sf.write(os.path.join(save_wav_dir, f"wo|{batch.raw_texts[i]}.wav"), wav_prediction, samplerate=sampling_rate)
+                sf.write(save_wav_dir / f"wo|{batch.raw_texts[i]}.wav", wav_prediction, samplerate=sampling_rate)
                 duration = output_wo_sign.d_rounded[i]
                 plot_mel((
                     mel_prediction_wo_sign.squeeze(0).cpu().numpy(),
                     expand(output_wo_sign.p_predictions[i], duration),
                     expand(output_wo_sign.e_predictions[i], duration)),
-                    stats, os.path.join(save_mel_dir, f"wo|{batch.raw_texts[i]}"))
+                    stats, (save_mel_dir / f"wo|{batch.raw_texts[i]}").as_posix())
                 # with sign
                 mel_len_w_sign = output_w_sign.mel_lens[i]
                 mel_prediction_w_sign = output_w_sign.mels[i, :, :mel_len_w_sign].detach().transpose(1, 2)
@@ -135,18 +140,18 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
                     model_config,
                     preprocess_config,
                 )[0]
-                sf.write(os.path.join(save_wav_dir, f"w|{batch.raw_texts[i]}.wav"), wav_prediction, samplerate=sampling_rate)
+                sf.write(save_wav_dir / f"w|{batch.raw_texts[i]}.wav", wav_prediction, samplerate=sampling_rate)
                 duration = output_w_sign.d_rounded[i]
                 plot_mel((
                     mel_prediction_w_sign.squeeze(0).cpu().numpy(),
                     expand(output_w_sign.p_predictions[i], duration),
                     expand(output_w_sign.e_predictions[i], duration)),
-                    stats, os.path.join(save_mel_dir, f"w|{batch.raw_texts[i]}"))
+                    stats, (save_mel_dir / f"w|{batch.raw_texts[i]}").as_posix())
                 if need_prosody_dist:
                     plot_sign_prosody_dist(
                         batch.prosody_label[i].numpy(), output_w_sign.sign_prosody_predictions[i],
                         energy_mean[i] * sign_info["std"][0] + sign_info["mean"][0], pitch_mean[i] * sign_info["std"][1] + sign_info["mean"][1],
-                        save_dist_dir, f"{batch.raw_texts[i]}")
+                        save_dist_dir, batch.raw_texts[i])
                 # add metadata
                 name_list.append(batch.video_names[i])
                 text_list.append(batch.raw_texts[i])
@@ -158,23 +163,23 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
 
             torch.cuda.empty_cache()
     metadata = pd.DataFrame({ "name": name_list, "text": text_list, "L2": l2_list })
-    metadata.to_csv(os.path.join(save_metadata_dir, f"{epoch}_{local_rank}.tsv"), sep="\t", index=False)
+    metadata.to_csv(save_metadata_dir / f"{epoch}_{local_rank}.tsv", sep="\t", index=False)
 
 
-def save_metadata(n_gpus, output_dir, epoch):
-    save_metadata_dir = os.path.join(output_dir, "metadata")
+def save_metadata(n_gpus: int, output_dir: Path, epoch: int):
+    save_metadata_dir = output_dir / "metadata"
     metadata = pd.concat(
-        pd.read_csv(os.path.join(save_metadata_dir, f"{epoch}_{local_rank}.tsv"), sep="\t") for local_rank in range(n_gpus)
+        pd.read_csv(save_metadata_dir / f"{epoch}_{local_rank}.tsv", sep="\t") for local_rank in range(n_gpus)
     ).drop_duplicates(subset="name").reset_index(drop=True)
     for local_rank in range(n_gpus):
-        os.remove(os.path.join(save_metadata_dir, f"{epoch}_{local_rank}.tsv"))
+        (save_metadata_dir / f"{epoch}_{local_rank}.tsv").unlink()
     l2_list = metadata["L2"]
     arg_idx = len(l2_list) - np.argsort(np.argsort(l2_list))
     metadata["L2_index"] = arg_idx
-    metadata.to_csv(os.path.join(save_metadata_dir, f"{epoch}.tsv"), sep="\t", index=False)
+    metadata.to_csv(save_metadata_dir / f"{epoch}.tsv", sep="\t", index=False)
 
 
-def save_validation_loss(model_wrapper: SemiCycleGANModelWrapper, data_loader):
+def save_validation_loss(model_wrapper: SemiCycleGANModelWrapper, data_loader: Any):
     valid_loss_logs: dict[str, list] = {
         "GAN loss/G (valid)": [],
         "prosody loss/v_loss (valid)": [],

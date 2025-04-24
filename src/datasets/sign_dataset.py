@@ -1,20 +1,25 @@
-import os
+from logging import getLogger
+from pathlib import Path
+from typing import Tuple, Dict, List, Any
 from collections import namedtuple
 
 import math
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import pickle
 import torch
 from torch.utils.data import Dataset
 
 
+logger = getLogger(__name__)
+
 SignData = namedtuple("SignData", "raw_texts text_tokens mask visual_prefix token_length visual_length prosody_label video_names")
 
 
 class SignDataset(Dataset):
-    def __init__(self, preprocess_config, train_config, local_rank,
-                 phase="train", split="train", partial_list_path=None, sort=False, drop_last=False):
+    def __init__(self, preprocess_config: Dict[str, Any], train_config: Dict[str, Any], local_rank: int,
+                 phase: str="train", split: str="train", partial_list_path: str=None, sort: bool=False, drop_last: bool=False):
         self.sort = sort
         self.drop_last = drop_last
         self.batch_size = train_config["optimizer"]["batch_size"]
@@ -37,7 +42,6 @@ class SignDataset(Dataset):
         self.visual_token_dim = preprocess_config["preprocessing_sign"]["prefix_dim"]
 
 
-        # label_path = os.path.join(f"/mnt/workspace/openasl-pre/openasl-v1.0.tsv")
         assert self.label_path is not None, "Specify --label_path"
         data_frame = pd.read_csv(self.label_path, sep="\t", low_memory=False)
 
@@ -55,10 +59,10 @@ class SignDataset(Dataset):
             data_frame = data_frame.loc[data_frame["split"].str.contains(split)]
 
         def filter_missing_or_short(row):
-            full_path = os.path.join(self.feat_path, self.split, f"{row['vid']}.pkl")
-            ok = os.path.exists(full_path) and os.path.getsize(full_path) > 0
+            full_path = Path(self.feat_path, self.split, f"{row['vid']}.pkl")
+            ok = full_path.exists() and full_path.stat().st_size > 0
             if ok and self.phase == "train":
-                with open(full_path, "rb") as file:
+                with full_path.open("rb") as file:
                     pose_keypoints = pickle.load(file)
                     ok = ok and (pose_keypoints.shape[0] >= 30)
             return ok
@@ -66,10 +70,10 @@ class SignDataset(Dataset):
         is_missing_or_short = data_frame.apply(filter_missing_or_short, axis=1)
         df_filtered = data_frame[is_missing_or_short]
         if self.local_rank == 0:
-            base_name = os.path.basename(self.label_path)
+            base_name = Path(self.label_path).name
             df_filtered.to_csv(self.label_path.replace(base_name, f"filtered_{self.split}.tsv"), sep="\t")
         if self.local_rank == 0:
-            print(f"Split:{split}\nBefore filtering: {len(data_frame)}\n After filtering: {len(df_filtered)}")
+            logger.info(f"Split:{split}\nBefore filtering: {len(data_frame)}\nAfter filtering : {len(df_filtered)}")
         # translation labels and sample names (split agnostic)
         self.translation = df_filtered["raw-text"].to_list()
         self.video_names = df_filtered["vid"].to_list()
@@ -80,8 +84,9 @@ class SignDataset(Dataset):
 
         token_id_lens = [0 for _ in range(len(self.translation))]
         self.translation_token_ids = [np.array([]) for _ in range(len(self.translation))]
-        if os.path.exists(preprocess_config["preprocessing_sign"]["translation_token_ids"]):
-            for t in open(preprocess_config["preprocessing_sign"]["translation_token_ids"]).readlines():
+        trans_id_path = Path(preprocess_config["preprocessing_sign"]["translation_token_ids"])
+        if trans_id_path.exists():
+            for t in trans_id_path.open().readlines():
                 vid, trans_ids_str = t.rstrip("\n").split("|")
                 trans_ids = list(map(int, trans_ids_str.split(" ")))
                 if vid in self.vid2idx:
@@ -135,15 +140,14 @@ class SignDataset(Dataset):
 
         assert len(self.translation_token_ids) == len(
             self.video_names), f"Text ids count:{len(self.translation_token_ids)}\tVid count:{len(self.video_names)}"
-        all_len = np.array([len(tk)
-                               for tk in self.translation_token_ids])
+        all_len = np.array([len(tk) for tk in self.translation_token_ids])
         if not self.partial and self.phase == "train":
             self.max_seq_len = min(
                 int(all_len.mean() + all_len.std() * 10), int(all_len.max()))
         else:
             self.max_seq_len = int(all_len.max())
         if self.local_rank == 0:
-            print(f"Max sequence length:{self.max_seq_len}")
+            logger.info(f"Max sequence length:{self.max_seq_len}")
 
     def __len__(self):
         if self.partial:
@@ -167,14 +171,14 @@ class SignDataset(Dataset):
         std = var ** 0.5
         return { "mean": mean, "std": std }
 
-    def read_keypoints(self, index: int):
+    def read_keypoints(self, index: int) -> npt.NDArray[np.float32]:
         vid_name = self.video_names[index]
-        file_path = os.path.join(self.feat_path, self.split, f"{vid_name}.pkl")
-        with open(file_path, "rb") as f:
+        file_path = Path(self.feat_path, self.split, f"{vid_name}.pkl")
+        with file_path.open("rb") as f:
             pose_keypoints = pickle.load(f)
         return pose_keypoints
 
-    def read_video_wise_normal_keypoints(self, index: int):
+    def read_video_wise_normal_keypoints(self, index: int) -> npt.NDArray[np.float32]:
         pose_keypoints = self.read_keypoints(index)
         yid = self.yids[index]
         video_range = self.yid2range[yid]
@@ -183,11 +187,11 @@ class SignDataset(Dataset):
         pose_keypoints[:, :, :2] = pose_keypoints[:, :, :2] * 2 - 1
         return pose_keypoints
 
-    def make_prosody_label(self, pose_keypoints):
+    def make_prosody_label(self, pose_keypoints: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         represnt_hands = pose_keypoints[:, [91, 112], :]
         represent_face = pose_keypoints[:, [50, 85, 42, 47], :]
 
-        def norm_pose(pose):
+        def norm_pose(pose: npt.NDArray[np.float32]):
             return (pose[:, :, 0] ** 2 + pose[:, :, 1] ** 2) ** 0.5
 
         velocity_hands = np.diff(represnt_hands[:, :, :2], axis=0)
@@ -230,7 +234,7 @@ class SignDataset(Dataset):
 
         return prosody_label
 
-    def read_pose_files(self, index: int):
+    def read_pose_files(self, index: int) -> Tuple[npt.NDArray[np.float32], int, npt.NDArray[np.float32]]:
         # MMPose 76
         body_sample_indices = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
@@ -332,7 +336,7 @@ class SignDataset(Dataset):
 
         return tokens, mask, tokens_length
 
-    def __getitem__(self, index: int):
+    def __getitem__(self, index: int) -> SignData:
         if self.partial:
             index = self.partial_idx[index]
         if self.phase == "train":
@@ -357,7 +361,7 @@ class SignDataset(Dataset):
             visual_prefix = visual_prefix.type(torch.FloatTensor)
             return SignData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, _, video_name)
 
-    def reprocess(self, raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, video_names, idxs):
+    def reprocess(self, raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, video_names, idxs) -> SignData:
         raw_texts = [raw_texts[idx] for idx in idxs]
         text_tokens = torch.from_numpy(np.array([text_tokens[idx] for idx in idxs])).long()
         mask = torch.from_numpy(np.array([mask[idx] for idx in idxs])).float()
@@ -369,7 +373,7 @@ class SignDataset(Dataset):
 
         return SignData(raw_texts, text_tokens, mask, visual_prefix, token_length, visual_length, prosody_label, video_names)
 
-    def collate_fn(self, data):
+    def collate_fn(self, data) -> List[SignData]:
         data_size = len(data)
 
         if self.sort:

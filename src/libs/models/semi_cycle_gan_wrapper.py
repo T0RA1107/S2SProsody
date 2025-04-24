@@ -1,7 +1,9 @@
 import random
+from typing import Dict
 import torch
 import torch.nn.functional as F
 
+from datasets.sign_dataset import SignData
 from .semi_cycle_gan import SemiCycleGANModel, TrainOutput, InferenceOutput
 from .semi_cycle_gan import random_clip_batch
 
@@ -11,7 +13,7 @@ class SemiCycleGANModelWrapper:
         self.model: SemiCycleGANModel = model
 
     @torch.no_grad()
-    def validate(self, sign):
+    def validate(self, sign: SignData):
         batch_size = sign.text_tokens.shape[0]
         token_length = sign.token_length.to(self.model.device, non_blocking=True)
         max_src_len = token_length.max().to(self.model.device, non_blocking=True)
@@ -59,7 +61,7 @@ class SemiCycleGANModelWrapper:
         _, pgr_info = self.model.criterionRGR(output_w_sign, prosody_label, speakers.detach().cpu().tolist())
 
         loss_log = {
-            "GAN loss/G (valid)": loss_G_audio.detach().cpu(),
+            "GAN loss/G (valid)": loss_G_audio.detach().cpu().item(),
             "prosody loss/v_loss (valid)": pr_info.v_loss,
             "prosody loss/a_loss (valid)": pr_info.a_loss,
             "prosody loss/total (valid)": pr_info.total,
@@ -71,7 +73,7 @@ class SemiCycleGANModelWrapper:
         return loss_log
 
     @torch.no_grad()
-    def inference(self, sign, vid2gender=None, estimateProsody=False):
+    def inference(self, sign: SignData, vid2gender: Dict[str, str]=None, estimateProsody: bool=False):
         token_length = sign.token_length.to(self.model.device, non_blocking=True)
         max_src_len = token_length.max().to(self.model.device, non_blocking=True)
         text_tokens = sign.text_tokens[:, :max_src_len].to(self.model.device, non_blocking=True)

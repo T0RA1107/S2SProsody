@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import json
 from collections import namedtuple
 
@@ -26,7 +26,7 @@ class AudioDataset(Dataset):
         self.basename, self.speaker, self.text, self.raw_text = self.process_meta(
             filename
         )
-        with open(os.path.join(self.preprocessed_path, "speakers.json")) as f:
+        with Path(self.preprocessed_path, "speakers.json").open() as f:
             self.speaker_map = json.load(f)
             self.speaker_num = len(self.speaker_map)
 
@@ -34,7 +34,7 @@ class AudioDataset(Dataset):
             self.all_speakers = self.speaker_map.keys()
         else:
             self.all_speakers = set()
-            with open(model_config["speaker"]["all"], "r") as f:
+            with Path(model_config["speaker"]["all"]).open() as f:
                 for pid in f.readlines():
                     self.all_speakers.add(pid.rstrip())
             basename_, speaker_, text_, raw_text_ = [], [], [], []
@@ -64,19 +64,19 @@ class AudioDataset(Dataset):
             basename = self.basename[idx]
             speaker = self.speaker[idx]
             speaker_id = self.speaker_map[speaker]
-            pitch_path = os.path.join(
+            pitch_path = Path(
                 self.preprocessed_path,
                 "pitch",
                 "{}-pitch-{}.npy".format(speaker, basename),
             )
             pitch = np.load(pitch_path)
-            energy_path = os.path.join(
+            energy_path = Path(
                 self.preprocessed_path,
                 "energy",
                 "{}-energy-{}.npy".format(speaker, basename),
             )
             energy = np.load(energy_path)
-            duration_path = os.path.join(
+            duration_path = Path(
                 self.preprocessed_path,
                 "duration",
                 "{}-duration-{}.npy".format(speaker, basename),
@@ -128,25 +128,25 @@ class AudioDataset(Dataset):
         speaker_id = self.speaker_map[speaker]
         raw_text = self.raw_text[idx]
         phone = np.array(text_to_sequence(self.text[idx], self.cleaners))
-        mel_path = os.path.join(
+        mel_path = Path(
             self.preprocessed_path,
             "mel",
             "{}-mel-{}.npy".format(speaker, basename),
         )
         mel = np.load(mel_path)
-        pitch_path = os.path.join(
+        pitch_path = Path(
             self.preprocessed_path,
             "pitch",
             "{}-pitch-{}.npy".format(speaker, basename),
         )
         pitch = np.load(pitch_path)
-        energy_path = os.path.join(
+        energy_path = Path(
             self.preprocessed_path,
             "energy",
             "{}-energy-{}.npy".format(speaker, basename),
         )
         energy = np.load(energy_path)
-        duration_path = os.path.join(
+        duration_path = Path(
             self.preprocessed_path,
             "duration",
             "{}-duration-{}.npy".format(speaker, basename),
@@ -167,9 +167,7 @@ class AudioDataset(Dataset):
         return sample
 
     def process_meta(self, filename):
-        with open(
-            os.path.join(self.preprocessed_path, filename), "r", encoding="utf-8"
-        ) as f:
+        with Path(self.preprocessed_path, filename).open("r", encoding="utf-8") as f:
             name = []
             speaker = []
             text = []

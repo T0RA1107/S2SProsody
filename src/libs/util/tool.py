@@ -3,7 +3,6 @@ import random
 import numpy as np
 import torch
 import torch.nn.functional as F
-import torch.utils
 
 # from libs.models.semi_cycle_gan import InferenceOutput
 

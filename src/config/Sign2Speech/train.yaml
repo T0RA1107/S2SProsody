@@ -1,7 +1,6 @@
 path:
-  ckpt_path: "../output/ckpt/Sign2Speech"
-  log_path: "../output/log/Sign2Speech"
-  result_path: "../output/result/Sign2Speech"
+  output_path: "../output/Sign2Speech"
+  result_path: "../result/Sign2Speech"
 
 fine-tuning: "./config/VCTK"
 
