@@ -101,10 +101,10 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
     save_dist_dir = output_dir / "dists" / str(epoch)
     save_mel_dir = output_dir / "mels" / str(epoch)
     save_metadata_dir = output_dir / "metadata"
-    save_wav_dir.mkdir(exist_ok=True)
-    save_mel_dir.mkdir(exist_ok=True)
-    save_dist_dir.mkdir(exist_ok=True)
-    save_metadata_dir.mkdir(exist_ok=True)
+    save_wav_dir.mkdir(exist_ok=True, parents=True)
+    save_mel_dir.mkdir(exist_ok=True, parents=True)
+    save_dist_dir.mkdir(exist_ok=True, parents=True)
+    save_metadata_dir.mkdir(exist_ok=True, parents=True)
     name_list = []
     text_list = []
     l2_list = []
@@ -168,6 +168,7 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
 
 def save_metadata(n_gpus: int, output_dir: Path, epoch: int):
     save_metadata_dir = output_dir / "metadata"
+    save_metadata_dir.mkdir(exist_ok=True)
     metadata = pd.concat(
         pd.read_csv(save_metadata_dir / f"{epoch}_{local_rank}.tsv", sep="\t") for local_rank in range(n_gpus)
     ).drop_duplicates(subset="name").reset_index(drop=True)

@@ -33,7 +33,7 @@ def main(args, configs, configs_ft):
     dt_now = datetime.datetime.now()
     run_name = dt_now.strftime("%m:%d:%H:%M")
     result_dir = Path(train_config["path"]["result_path"], run_name)
-    result_dir.mkdir(exist_ok=True)
+    result_dir.mkdir(exist_ok=True, parents=True)
     basicConfig(
         level=DEBUG if args.debug else INFO,
         format="[%(asctime)s] %(name)s %(levelname)s: %(message)s",
@@ -140,13 +140,9 @@ def main(args, configs, configs_ft):
     output_dir = Path(train_config["path"]["output_path"], run_name)
     if not args.without_save_wav:
         wav_dir = output_dir / "wavs"
-        if args.local_rank == 0:
-            output_dir.mkdir(exist_ok=True)
-            wav_dir.mkdir(exist_ok=True)
-    if args.local_rank == 0 and args.save_ckpt:
-        output_dir.mkdir(exist_ok=True)
+    if args.save_ckpt:
         ckpt_dir = output_dir / "ckpt"
-        ckpt_dir.mkdir(exist_ok=True)
+        ckpt_dir.mkdir(exist_ok=True, parents=True)
 
     if args.local_rank == 0 and args.use_wandb:
         wandb.init(

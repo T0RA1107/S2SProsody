@@ -11,7 +11,7 @@ class TrainLogger(object):
     def __init__(self, log_dir: Path, resume: bool=False, epoch: int=0) -> None:
         self.log_dir = log_dir
         self.loss_dir = log_dir / "loss"
-        self.loss_dir.mkdir(exist_ok=True)
+        self.loss_dir.mkdir(exist_ok=True, parents=True)
         self.log_path = self.loss_dir / f"{epoch}.tsv"
         self.epoch = epoch
         self.columns = [
