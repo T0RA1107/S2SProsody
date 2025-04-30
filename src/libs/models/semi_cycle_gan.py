@@ -217,7 +217,14 @@ class SemiCycleGANModel(BaseModel):
 
         loss_D = (loss_D_real + loss_D_fake) * 0.5
         torch.cuda.empty_cache()
-        return loss_D, { "GAN loss/D": loss_D.detach().cpu().item() }
+        loss_log = {
+            "GAN loss/D": loss_D.detach().cpu().item(),
+            "output/pred_fake mean": pred_fake.detach().mean().cpu().item(),
+            "output/pred_fake std": pred_fake.detach().std().cpu().item(),
+            "output/pred_real mean": pred_real.detach().mean().cpu().item(),
+            "output/pred_real std": pred_real.detach().std().cpu().item(),
+        }
+        return loss_D, loss_log
 
     def backward_D(self, output: TrainOutput):
         loss_D, loss_log = self.calc_D(output)

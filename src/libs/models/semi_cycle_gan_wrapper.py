@@ -36,13 +36,14 @@ class SemiCycleGANModelWrapper:
         audio_lens = pred.mel_lens
 
         prosody_predictions = torch.cat([
-            pred.p_predictions_w_sign.unsqueeze(1),
-            pred.e_predictions_w_sign.unsqueeze(1),
+            pred.p_predictions.unsqueeze(1),
+            pred.e_predictions.unsqueeze(1),
+            pred.weight_sign
         ], dim=1)
         sign_prosody_predictions = self.model.netProsody_estimator(prosody_predictions)
         output_w_sign = TrainOutput(
             audio, sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
-            pred.p_predictions_w_sign, pred.e_predictions_w_sign, pred.log_d_predictions, pred.d_rounded,
+            pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
             sign_prosody_predictions, pred.weight_sign.detach().cpu())
 
         # GAN Loss
@@ -103,6 +104,7 @@ class SemiCycleGANModelWrapper:
             prosody_predictions = torch.cat([
                 pred.p_predictions_wo_sign.unsqueeze(1),
                 pred.e_predictions_wo_sign.unsqueeze(1),
+                torch.zeros_like(pred.p_predictions_wo_sign.unsqueeze(1), device=self.model.device).repeat((1, 2, 1))
             ], dim=1)
             pred_prosody_label = self.model.netProsody_estimator(prosody_predictions)
             pred_prosody_label = F.softmax(pred_prosody_label, dim=-1).cpu().numpy()
@@ -122,6 +124,7 @@ class SemiCycleGANModelWrapper:
             prosody_predictions = torch.cat([
                 pred.p_predictions_w_sign.unsqueeze(1),
                 pred.e_predictions_w_sign.unsqueeze(1),
+                pred.weight_sign
             ], dim=1)
             pred_prosody_label = self.model.netProsody_estimator(prosody_predictions)
             pred_prosody_label = F.softmax(pred_prosody_label, dim=-1).cpu().numpy()

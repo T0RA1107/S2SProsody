@@ -30,6 +30,15 @@ s2sMixer:
   dropout: 0.2
   max_seq_len: 1000
 
+MoE:
+  decoder_layer: 1
+  decoder_head: 2
+  decoder_hidden: 256
+  conv_filter_size: 1024
+  conv_kernel_size: [9, 1]
+  dropout: 0.2
+  max_seq_len: 1000
+
 D_audio:
   ndf: 64
   netD: basic

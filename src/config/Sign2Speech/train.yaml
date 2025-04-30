@@ -15,12 +15,12 @@ optimizer:
   grad_clip_thresh: 1.0
   grad_acc_step: 1
   warm_up_step: 4000
-  discriminator_epoch: 5
+  discriminator_epoch: 15
 
 loss:
   prosody:
     dist: True
-    bins: 32
+    bins: 16
     dist_loss_type: CELoss
   weight:
     prosody: 0.1
