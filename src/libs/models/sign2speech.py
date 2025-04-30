@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from libs.util.tool import get_mask_from_lengths
-from .modules.transformer.Models import S2SMixer
+from .modules.transformer.Models import S2SMixer, MoE
 from .modules import VarianceAdaptorWithReference
 from .fastspeech2 import FastSpeech2
 from .visual_backbone import PartedPoseBackbone
@@ -15,6 +15,8 @@ SpeechPrediction = namedtuple("SpeechPrediction", [
     "mels_w_sign",
     "p_predictions_w_sign",
     "e_predictions_w_sign",
+    "p_predictions",
+    "e_predictions",
     "log_d_predictions",
     "d_rounded",
     "src_masks",
@@ -44,11 +46,7 @@ class Sign2Speech(FastSpeech2):
             self.visual_project = nn.Linear(self.dim_visual, self.dim_embedding)
         else:
             self.visual_project == nn.Identity()
-        self.MoE = nn.Sequential(
-            nn.Linear(2 * self.dim_embedding, self.dim_embedding),
-            nn.ReLU(),
-            nn.Linear(self.dim_embedding, 1)
-        )
+        self.MoE = MoE(model_config)
 
     def forward(
         self,
@@ -100,19 +98,33 @@ class Sign2Speech(FastSpeech2):
         if key_point is not None:
             sign_embbeding = self.sign_processer(key_point)  # [B, C, T, V] -> [B, T, C]
             sign_embbeding = self.visual_project(sign_embbeding)
-            output_crsattn = self.s2s_mixier(phoneme_embedding, sign_embbeding)
+            prosody_embedding = self.s2s_mixier(phoneme_embedding, sign_embbeding)
 
-            concat_prosody_embedding = torch.cat((output_crsattn.mean(dim=1), phoneme_embedding.mean(dim=1)), dim=1)
-            weight_sign = torch.sigmoid(self.MoE(concat_prosody_embedding)).unsqueeze(2)
-            prosody_embedding = weight_sign * output_crsattn + (1 - weight_sign) * phoneme_embedding
+            weight_sign = torch.sigmoid(self.MoE(phoneme_embedding, sign_embbeding))
 
             (
-                output_w_sign, p_predictions_w_sign, e_predictions_w_sign, *_
+                _, p_predictions_w_sign, e_predictions_w_sign, *_
             ) = self.variance_adaptor(
                 phoneme_embedding,
                 prosody_embedding,
                 src_masks,
                 duration_target=d_rounded,
+                p_control=p_control,
+                e_control=e_control,
+                d_control=d_control,
+                only_prediction=True
+            )
+            p_predictions = weight_sign[:, 0, :] * p_predictions_w_sign + (1 - weight_sign[:, 0, :]) * p_predictions_wo_sign
+            e_predictions = weight_sign[:, 1, :] * e_predictions_w_sign + (1 - weight_sign[:, 1, :]) * e_predictions_wo_sign
+            (
+                output_w_sign, *_
+            ) = self.variance_adaptor(
+                phoneme_embedding,
+                None,
+                src_masks,
+                duration_target=d_rounded,
+                pitch_target=p_predictions,
+                energy_target=e_predictions,
                 p_control=p_control,
                 e_control=e_control,
                 d_control=d_control,
@@ -129,6 +141,8 @@ class Sign2Speech(FastSpeech2):
             mels_w_sign,
             p_predictions_w_sign,
             e_predictions_w_sign,
+            p_predictions,
+            e_predictions,
             log_d_predictions,
             d_rounded,
             src_masks,

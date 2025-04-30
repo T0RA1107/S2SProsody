@@ -109,7 +109,7 @@ class SemiCycleGANModel(BaseModel):
 
             # initialize prosody estimator
             self.netProsody_estimator = ProsodyDistEstimator1D(
-                2, train_config["loss"]["prosody"]["bins"], 4
+                4, train_config["loss"]["prosody"]["bins"], 4
             )
             self.netProsody_estimator = networks.init_net(self.netProsody_estimator, args, distributed=distributed)
 
@@ -167,6 +167,7 @@ class SemiCycleGANModel(BaseModel):
         prosody_predictions = torch.cat([
             pred.p_predictions_wo_sign.unsqueeze(1),
             pred.e_predictions_wo_sign.unsqueeze(1),
+            torch.zeros_like(pred.p_predictions_wo_sign.unsqueeze(1), device=self.device).repeat((1, 2, 1))
         ], dim=1)
         pred_prosody_label = self.netProsody_estimator(prosody_predictions)
         output_wo_sign = TrainOutput(
@@ -179,8 +180,9 @@ class SemiCycleGANModel(BaseModel):
             pred.mel_masks.unsqueeze(2).repeat(1, 1, pred.mels_w_sign.shape[2]), 0.0).unsqueeze(1)
         audio_lens = pred.mel_lens
         prosody_predictions = torch.cat([
-            pred.p_predictions_w_sign.unsqueeze(1),
-            pred.e_predictions_w_sign.unsqueeze(1),
+            pred.p_predictions.unsqueeze(1),
+            pred.e_predictions.unsqueeze(1),
+            pred.weight_sign
         ], dim=1)
         pred_prosody_label = self.netProsody_estimator(prosody_predictions)
         output_w_sign = TrainOutput(

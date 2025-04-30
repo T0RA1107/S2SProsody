@@ -162,10 +162,11 @@ class VarianceAdaptorWithReference(nn.Module):
             setattr(self, key, value)
 
     def get_pitch_embedding(self, x, target, mask, control):
-        prediction = self.pitch_predictor(x, mask)
         if target is not None:
             embedding = self.pitch_embedding(torch.bucketize(target, self.pitch_bins))
+            prediction = None
         else:
+            prediction = self.pitch_predictor(x, mask)
             prediction = prediction * control
             embedding = self.pitch_embedding(
                 torch.bucketize(prediction, self.pitch_bins)
@@ -173,12 +174,13 @@ class VarianceAdaptorWithReference(nn.Module):
         return prediction, embedding
 
     def get_energy_embedding(self, x, target, mask, control):
-        prediction = self.energy_predictor(x, mask)
         if target is not None:
             embedding = self.energy_embedding(
                 torch.bucketize(target, self.energy_bins)
             )
+            prediction = None
         else:
+            prediction = self.energy_predictor(x, mask)
             prediction = prediction * control
             embedding = self.energy_embedding(
                 torch.bucketize(prediction, self.energy_bins)
@@ -198,6 +200,7 @@ class VarianceAdaptorWithReference(nn.Module):
         p_control=1.0,
         e_control=1.0,
         d_control=1.0,
+        only_prediction=False,
     ):
 
         log_duration_prediction = self.duration_predictor(x, src_mask)
@@ -234,15 +237,26 @@ class VarianceAdaptorWithReference(nn.Module):
             )
             x = x + energy_embedding
 
-        return (
-            x,
-            pitch_prediction,
-            energy_prediction,
-            log_duration_prediction,
-            duration_rounded,
-            mel_len,
-            mel_mask
-        )
+        if not only_prediction:
+            return (
+                x,
+                pitch_prediction,
+                energy_prediction,
+                log_duration_prediction,
+                duration_rounded,
+                mel_len,
+                mel_mask
+            )
+        else:
+            return (
+                None,
+                pitch_prediction,
+                energy_prediction,
+                log_duration_prediction,
+                duration_rounded,
+                mel_len,
+                mel_mask
+            )
 
 
 class LengthRegulator(nn.Module):

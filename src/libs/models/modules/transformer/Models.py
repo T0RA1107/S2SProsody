@@ -234,3 +234,71 @@ class S2SMixer(nn.Module):
                 dec_slf_attn_list += [dec_slf_attn]
 
         return dec_output
+
+
+class MoE(nn.Module):
+    """ MoE """
+
+    def __init__(self, config):
+        super(MoE, self).__init__()
+
+        n_position = config["MoE"]["max_seq_len"] + 1
+        d_word_vec = config["MoE"]["decoder_hidden"]
+        n_layers = config["MoE"]["decoder_layer"]
+        n_head = config["MoE"]["decoder_head"]
+        d_k = d_v = (
+            config["MoE"]["decoder_hidden"]
+            // config["MoE"]["decoder_head"]
+        )
+        d_model = config["MoE"]["decoder_hidden"]
+        d_inner = config["MoE"]["conv_filter_size"]
+        kernel_size = config["MoE"]["conv_kernel_size"]
+        dropout = config["MoE"]["dropout"]
+
+        self.max_seq_len = config["MoE"]["max_seq_len"]
+        self.d_model = d_model
+
+        self.position_enc = nn.Parameter(
+            get_sinusoid_encoding_table(n_position, d_word_vec).unsqueeze(0),
+            requires_grad=False,
+        )
+
+        self.layer_stack = nn.ModuleList(
+            [
+                FFTBlockCrossAttention(
+                    d_model, n_head, d_k, d_v, d_inner, kernel_size, dropout=dropout
+                )
+                for _ in range(n_layers)
+            ]
+        )
+        self.fc = nn.Linear(d_model, 2)
+
+    def forward(self, enc_seq, memory_seq, return_attns=False):
+
+        dec_slf_attn_list = []
+        batch_size, max_len = enc_seq.shape[0], enc_seq.shape[1]
+
+        # -- Forward
+        if not self.training and enc_seq.shape[1] > self.max_seq_len:
+            dec_output = enc_seq + get_sinusoid_encoding_table(
+                enc_seq.shape[1], self.d_model
+            )[: enc_seq.shape[1], :].unsqueeze(0).expand(batch_size, -1, -1).to(
+                enc_seq.device
+            )
+            dec_output = self.fc(dec_output)
+        else:
+            max_len = min(max_len, self.max_seq_len)
+
+            dec_output = enc_seq[:, :max_len, :] + self.position_enc[
+                :, :max_len, :
+            ].expand(batch_size, -1, -1)
+
+        for dec_layer in self.layer_stack:
+            dec_output, dec_slf_attn = dec_layer(
+                dec_output, memory_seq
+            )
+            dec_output = self.fc(dec_output)
+            if return_attns:
+                dec_slf_attn_list += [dec_slf_attn]
+
+        return dec_output.transpose(1, 2)
