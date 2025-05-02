@@ -1,11 +1,23 @@
 import random
 from typing import Dict
+from collections import namedtuple
 import torch
 import torch.nn.functional as F
 
 from datasets.sign_dataset import SignData
-from .semi_cycle_gan import SemiCycleGANModel, TrainOutput, InferenceOutput
+from .semi_cycle_gan import SemiCycleGANModel, TrainOutput
 from .semi_cycle_gan import random_clip_batch
+
+InferenceOutput = namedtuple("InferenceOutput", [
+    "mels",
+    "src_lens",
+    "mel_lens",
+    "p_predictions",
+    "e_predictions",
+    "d_rounded",
+    "sign_prosody_predictions",
+    "weight_sign",
+])
 
 
 class SemiCycleGANModelWrapper:
@@ -104,7 +116,7 @@ class SemiCycleGANModelWrapper:
             prosody_predictions = torch.cat([
                 pred.p_predictions_wo_sign.unsqueeze(1),
                 pred.e_predictions_wo_sign.unsqueeze(1),
-                torch.zeros_like(pred.p_predictions_wo_sign.unsqueeze(1), device=self.model.device).repeat((1, 2, 1))
+                torch.zeros_like(pred.weight_sign, device=self.model.device)
             ], dim=1)
             pred_prosody_label = self.model.netProsody_estimator(prosody_predictions)
             pred_prosody_label = F.softmax(pred_prosody_label, dim=-1).cpu().numpy()
@@ -112,7 +124,7 @@ class SemiCycleGANModelWrapper:
         output_wo_sign = InferenceOutput(
             audio_wo_sign, sign.token_length.numpy(), audio_wo_sign_lens,
             pred.p_predictions_wo_sign.cpu().numpy(), pred.e_predictions_wo_sign.cpu().numpy(), pred.d_rounded.cpu().numpy(),
-            pred_prosody_label)
+            pred_prosody_label, torch.zeros_like(pred.weight_sign.detach().cpu()))
 
         # with sign language TTS
         audio_w_sign = pred.mels_w_sign.masked_fill(
@@ -132,7 +144,7 @@ class SemiCycleGANModelWrapper:
         output_w_sign = InferenceOutput(
             audio_w_sign, sign.token_length.numpy(), audio_w_sign_lens,
             pred.p_predictions_w_sign.cpu().numpy(), pred.e_predictions_w_sign.cpu().numpy(), pred.d_rounded.cpu().numpy(),
-            pred_prosody_label)
+            pred_prosody_label, pred.weight_sign.detach().cpu())
 
         torch.cuda.empty_cache()
         return output_wo_sign, output_w_sign, speakers.cpu().numpy()

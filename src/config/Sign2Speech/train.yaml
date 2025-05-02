@@ -23,16 +23,10 @@ loss:
     bins: 16
     dist_loss_type: CELoss
   weight:
-    prosody: 0.1
-    regdist_mean: 0.2
-    regdist_var: 10
+    prosody: 0.2
+    regdist_mean: 0.3
   PGR:
-    margin: 0.1
-
-discriminator:
-  noise:
-    mean: 0.0
-    std: 0.5
+    margin: 0.0
 
 dataset:
   serial_batches: False

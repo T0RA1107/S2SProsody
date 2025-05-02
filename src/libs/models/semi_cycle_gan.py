@@ -30,16 +30,6 @@ TrainOutput = namedtuple("TrainOutput", [
     "weight_sign",
 ])
 
-InferenceOutput = namedtuple("InferenceOutput", [
-    "mels",
-    "src_lens",
-    "mel_lens",
-    "p_predictions",
-    "e_predictions",
-    "d_rounded",
-    "sign_prosody_predictions",
-])
-
 
 def random_clip_batch(inputs: torch.Tensor, lengths: torch.Tensor, clip_length: int) -> torch.Tensor:
     # inputs: (B, C, L, ...)
@@ -130,9 +120,9 @@ class SemiCycleGANModel(BaseModel):
                                                 lr=train_config["optimizer"]["lr_G_s2a"],
                                                 betas=train_config["optimizer"]["betas"],
                                                 weight_decay=train_config["optimizer"]["weight_decay"])
-            self.optimizer_D = torch.optim.SGD(self.netD_audio.parameters(),
+            self.optimizer_D = torch.optim.AdamW(self.netD_audio.parameters(),
                                                 lr=train_config["optimizer"]["lr_D_a"],
-                                                momentum=0.9,
+                                                betas=train_config["optimizer"]["betas"],
                                                 weight_decay=train_config["optimizer"]["weight_decay"])
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
@@ -167,7 +157,7 @@ class SemiCycleGANModel(BaseModel):
         prosody_predictions = torch.cat([
             pred.p_predictions_wo_sign.unsqueeze(1),
             pred.e_predictions_wo_sign.unsqueeze(1),
-            torch.zeros_like(pred.p_predictions_wo_sign.unsqueeze(1), device=self.device).repeat((1, 2, 1))
+            torch.zeros_like(pred.weight_sign.detach(), device=self.device)
         ], dim=1)
         pred_prosody_label = self.netProsody_estimator(prosody_predictions)
         output_wo_sign = TrainOutput(

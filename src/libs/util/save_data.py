@@ -15,49 +15,72 @@ from .tool import expand, calc_normed_params
 
 
 def plot_mel(data: Tuple[npt.NDArray[np.float32], ...], stats: Tuple[float, ...], name: str):
-    fig, ax = plt.subplots()
+    fig, axd = plt.subplot_mosaic([["mel"], ["mel"], ["weight"]])
     pitch_min, pitch_max, pitch_mean, pitch_std, energy_min, energy_max = stats
     pitch_min = pitch_min * pitch_std + pitch_mean
     pitch_max = pitch_max * pitch_std + pitch_mean
 
-    def add_axis(fig: Any, old_ax: Any):
+    def add_axis(fig, old_ax):
         ax = fig.add_axes(old_ax.get_position(), anchor="W")
         ax.set_facecolor("None")
         return ax
 
-    mel, pitch, energy = data
+    mel, pitch, energy, weight_pitch, weight_energy = data
     pitch = pitch * pitch_std + pitch_mean
-    ax.imshow(mel, origin="lower")
-    ax.set_aspect(2.5, adjustable="box")
-    ax.set_ylim(0, mel.shape[0])
-    ax.tick_params(labelsize="x-small", left=False, labelleft=False)
-    ax.set_anchor("W")
+    ax_mel = axd["mel"]
+    ax_mel.imshow(mel, origin="lower")
+    ax_mel.set_aspect(2.5, adjustable="box")
+    ax_mel.set_ylim(0, mel.shape[0])
+    ax_mel.tick_params(labelsize="x-small", left=False, labelleft=False)
+    ax_mel.set_anchor("W")
 
-    ax1 = add_axis(fig, ax)
+    ax1 = add_axis(fig, ax_mel)
     ax1.plot(pitch, color="tomato")
     ax1.set_xlim(0, mel.shape[1])
     ax1.set_ylim(0, pitch_max)
     ax1.set_ylabel("F0", color="tomato")
     ax1.tick_params(
-        labelsize="x-small", colors="tomato", bottom=False, labelbottom=False
-    )
+        labelsize="x-small", colors="tomato", bottom=False, labelbottom=False)
 
-    ax2 = add_axis(fig, ax)
+    ax2 = add_axis(fig, ax_mel)
     ax2.plot(energy, color="darkviolet")
     ax2.set_xlim(0, mel.shape[1])
     ax2.set_ylim(energy_min, energy_max)
     ax2.set_ylabel("Energy", color="darkviolet")
     ax2.yaxis.set_label_position("right")
     ax2.tick_params(
-        labelsize="x-small",
-        colors="darkviolet",
-        bottom=False,
-        labelbottom=False,
-        left=False,
-        labelleft=False,
-        right=True,
-        labelright=True,
+        labelsize="x-small", colors="darkviolet",
+        bottom=False, labelbottom=False,
+        left=False, labelleft=False,
+        right=True, labelright=True,
     )
+
+    pos_weight = ax_mel.get_position()
+    pos_weight.y1, pos_weight.y0 = pos_weight.y0 - 0.05, pos_weight.y0 - (pos_weight.y1 - pos_weight.y0) * 0.5
+    ax_weight_pitch = axd["weight"]
+    ax_weight_pitch.set_position(pos_weight)
+    ax_weight_pitch.plot(weight_pitch, color="tomato")
+    ax_weight_pitch.set_xlim(0, mel.shape[1])
+    ax_weight_pitch.set_ylim(0, 1)
+    ax_weight_pitch.set_ylabel("Weight of Pitch", color="tomato")
+    ax_weight_pitch.tick_params(
+        labelsize="x-small", colors="tomato", bottom=False, labelbottom=False)
+    ax_weight_pitch.set_anchor("W")
+    ax_weight_energy = add_axis(fig, ax_weight_pitch)
+
+    ax_weight_energy.plot(weight_energy, color="darkviolet")
+    ax_weight_energy.set_position(pos_weight)
+    ax_weight_energy.set_xlim(0, mel.shape[1])
+    ax_weight_energy.set_ylim(0, 1)
+    ax_weight_energy.set_ylabel("Weight of Energy", color="darkviolet")
+    ax_weight_energy.yaxis.set_label_position("right")
+    ax_weight_energy.tick_params(
+        labelsize="x-small", colors="darkviolet",
+        bottom=False, labelbottom=False,
+        left=False, labelleft=False,
+        right=True, labelright=True)
+    ax_weight_energy.set_anchor("W")
+
     fig.savefig(f"{name}.png")
     plt.close()
 
@@ -129,7 +152,9 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
                 plot_mel((
                     mel_prediction_wo_sign.squeeze(0).cpu().numpy(),
                     expand(output_wo_sign.p_predictions[i], duration),
-                    expand(output_wo_sign.e_predictions[i], duration)),
+                    expand(output_wo_sign.e_predictions[i], duration),
+                    expand(output_wo_sign.weight_sign[i][0].cpu().numpy(), duration),
+                    expand(output_wo_sign.weight_sign[i][1].cpu().numpy(), duration)),
                     stats, (save_mel_dir / f"wo|{batch.raw_texts[i]}").as_posix())
                 # with sign
                 mel_len_w_sign = output_w_sign.mel_lens[i]
@@ -145,7 +170,9 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
                 plot_mel((
                     mel_prediction_w_sign.squeeze(0).cpu().numpy(),
                     expand(output_w_sign.p_predictions[i], duration),
-                    expand(output_w_sign.e_predictions[i], duration)),
+                    expand(output_w_sign.e_predictions[i], duration),
+                    expand(output_w_sign.weight_sign[i][0].cpu().numpy(), duration),
+                    expand(output_w_sign.weight_sign[i][1].cpu().numpy(), duration)),
                     stats, (save_mel_dir / f"w|{batch.raw_texts[i]}").as_posix())
                 if need_prosody_dist:
                     plot_sign_prosody_dist(
