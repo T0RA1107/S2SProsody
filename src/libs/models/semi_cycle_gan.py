@@ -6,6 +6,7 @@ from logging import getLogger
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from libs.util.audio_pool import AudioPool
 from .base_model import BaseModel
@@ -96,10 +97,12 @@ class SemiCycleGANModel(BaseModel):
             self.loss_log_D = {}
             self.weight_prosody = train_config["loss"]["weight"]["prosody"]
             self.weight_regdist_mean = train_config["loss"]["weight"]["regdist_mean"]
+            self.weight_intotation = train_config["loss"]["weight"]["intonation"]
+            self.weight_gate = train_config["loss"]["weight"]["gate"]
 
             # initialize prosody estimator
             self.netProsody_estimator = ProsodyDistEstimator1D(
-                4, train_config["loss"]["prosody"]["bins"], 4
+                3, train_config["loss"]["prosody"]["bins"], 4
             )
             self.netProsody_estimator = networks.init_net(self.netProsody_estimator, args, distributed=distributed)
 
@@ -109,6 +112,8 @@ class SemiCycleGANModel(BaseModel):
             self.criterionPR = ProsodyReconstructionLoss(train_config["loss"]["prosody"]["dist_loss_type"]).to(self.device, non_blocking=True)
             self.criterionRGR = ProsodyGuidedRegularizationLoss(sign_info, speaker_info, margin=train_config["loss"]["PGR"]["margin"]).to(self.device, non_blocking=True)
             self.criterionIR = IntonationRegularizationLoss().to(self.device, non_blocking=True)
+            # learnable weight of Generative loss
+            # self.weight_G = nn.Parameter(torch.tensor(0.), requires_grad=True)
             train_parameters = []
             train_layers = ["sign_processer", "s2s_mixier", "visual_project"]
             for name, param in self.netG_sign2audio.named_parameters():
@@ -124,8 +129,13 @@ class SemiCycleGANModel(BaseModel):
                                                 lr=train_config["optimizer"]["lr_D_a"],
                                                 betas=train_config["optimizer"]["betas"],
                                                 weight_decay=train_config["optimizer"]["weight_decay"])
+            # self.optimizer_w = torch.optim.AdamW([self.weight_G],
+            #                                     lr=train_config["optimizer"]["lr_G_s2a"],
+            #                                     betas=train_config["optimizer"]["betas"],
+            #                                     weight_decay=train_config["optimizer"]["weight_decay"])
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
+            # self.optimizers.append(self.optimizer_w)
             self.grad_clip_thresh = train_config["optimizer"]["grad_clip_thresh"]
 
     def set_input(self, inputs):
@@ -178,7 +188,7 @@ class SemiCycleGANModel(BaseModel):
         output_w_sign = TrainOutput(
             audio, self.real_sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
             pred.p_predictions_w_sign, pred.e_predictions_w_sign, pred.log_d_predictions, pred.d_rounded,
-            pred_prosody_label, pred.weight_sign.detach().cpu())
+            pred_prosody_label, pred.weight_sign)
 
         torch.cuda.empty_cache()
         return output_wo_sign, output_w_sign, speakers.detach().cpu().tolist()
@@ -230,6 +240,7 @@ class SemiCycleGANModel(BaseModel):
 
         pred_fake = self.netD_audio(fake)
         loss_G_audio = self.criterionGAN(pred_fake, True)
+        # loss_G_audio_weighted = loss_G_audio * F.softplus(self.weight_G.detach())
 
         # Prosody Reconstruction
         prosody_label = self.real_sign.prosody_label.to(self.device, non_blocking=True)
@@ -242,8 +253,14 @@ class SemiCycleGANModel(BaseModel):
         loss_PGR, pgr_info = self.criterionRGR(output_w_sign, prosody_label, speakers)
         # Intonation Regularization
         loss_IR, ir_info = self.criterionIR(output_w_sign, output_wo_sign)
+        # MoE weight regularization
+        loss_gate = torch.abs(1 - output_w_sign.weight_sign.mean())
+        # sum of loss around sign
+        sign_loss = loss_prosody * self.weight_prosody + loss_PGR * self.weight_regdist_mean + loss_IR * self.weight_intotation + loss_gate * self.weight_gate
+        # calculate loss for auto weight tuning
+        # loss_weight_tune = torch.abs(loss_G_audio.detach() * F.softplus(self.weight_G) - loss_prosody.detach() * self.weight_prosody)
         # combined loss and calculate gradients
-        loss_G = loss_G_audio + loss_prosody * self.weight_prosody + loss_PGR * self.weight_regdist_mean + loss_IR
+        loss_G = loss_G_audio + sign_loss # + loss_weight_tune
         loss_G.backward()
 
         loss_log = {
@@ -253,7 +270,9 @@ class SemiCycleGANModel(BaseModel):
             "prosody loss/total": pr_info_w_sign.total, "prosody loss without sign/total": pr_info_wo_sign.total,
             "Regularization/Energy mean": pgr_info.energy, "Regularization/Pitch mean": pgr_info.pitch,
             "Regularization/Energy intonation": ir_info.energy, "Regularization/Pitch intonation": ir_info.pitch,
-            "GAN loss/G": loss_G_audio.detach().cpu().item(), "total": loss_G.detach().cpu().item(),
+            # "Regularization/Weight tune": loss_weight_tune.detach().cpu().item(),
+            "GAN loss/G": loss_G_audio.detach().cpu().item(), # "GAN loss/G_weighted": loss_G_audio_weighted.detach().cpu().item(),
+            "total": loss_G.detach().cpu().item(),
             # Output memo
             "output/weight_sign mean": output_w_sign.weight_sign.detach().mean().cpu().item(),
             "output/weight_sign std": output_w_sign.weight_sign.detach().std().cpu().item(),
@@ -279,7 +298,9 @@ class SemiCycleGANModel(BaseModel):
         loss_log.update(loss_log_G)
         nn.utils.clip_grad_norm_(self.netG_sign2audio.parameters(), self.grad_clip_thresh)
         nn.utils.clip_grad_norm_(self.netProsody_estimator.parameters(), self.grad_clip_thresh)
+        # nn.utils.clip_grad_norm_([self.weight_G], self.grad_clip_thresh)
         self.optimizer_G.step()
+        # self.optimizer_w.step()
         # Discriminator's optimizing
         if random.random() < 0.5:
             self.real_audio = output_wo_sign

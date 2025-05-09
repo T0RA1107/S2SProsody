@@ -115,7 +115,10 @@ class Sign2Speech(FastSpeech2):
                 only_prediction=True
             )
             p_predictions = weight_sign[:, 0, :] * p_predictions_w_sign + (1 - weight_sign[:, 0, :]) * p_predictions_wo_sign
-            e_predictions = weight_sign[:, 1, :] * e_predictions_w_sign + (1 - weight_sign[:, 1, :]) * e_predictions_wo_sign
+            e_predictions = weight_sign[:, 0, :] * e_predictions_w_sign + (1 - weight_sign[:, 0, :]) * e_predictions_wo_sign
+            # print(weight_sign.shape)
+            # print(p_predictions_w_sign.shape, e_predictions_w_sign.shape)
+            # print(p_predictions.shape, e_predictions.shape)
             (
                 output_w_sign, *_
             ) = self.variance_adaptor(

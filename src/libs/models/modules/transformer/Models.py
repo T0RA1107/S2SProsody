@@ -271,7 +271,7 @@ class MoE(nn.Module):
                 for _ in range(n_layers)
             ]
         )
-        self.fc = nn.Linear(d_model, 2)
+        self.fc = nn.Linear(d_model, 1)
 
     def forward(self, enc_seq, memory_seq, return_attns=False):
 

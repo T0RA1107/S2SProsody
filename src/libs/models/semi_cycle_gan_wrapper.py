@@ -14,6 +14,8 @@ InferenceOutput = namedtuple("InferenceOutput", [
     "mel_lens",
     "p_predictions",
     "e_predictions",
+    "p_predictions_mixed",
+    "e_predictions_mixed",
     "d_rounded",
     "sign_prosody_predictions",
     "weight_sign",
@@ -55,7 +57,7 @@ class SemiCycleGANModelWrapper:
         sign_prosody_predictions = self.model.netProsody_estimator(prosody_predictions)
         output_w_sign = TrainOutput(
             audio, sign.token_length, audio_lens, pred.src_masks, pred.mel_masks,
-            pred.p_predictions, pred.e_predictions, pred.log_d_predictions, pred.d_rounded,
+            pred.p_predictions_w_sign, pred.e_predictions_w_sign, pred.log_d_predictions, pred.d_rounded,
             sign_prosody_predictions, pred.weight_sign.detach().cpu())
 
         # GAN Loss
@@ -80,6 +82,11 @@ class SemiCycleGANModelWrapper:
             "prosody loss/total (valid)": pr_info.total,
             "Regularization/Energy mean (valid)": pgr_info.energy,
             "Regularization/Pitch mean (valid)": pgr_info.pitch,
+            # Output memo
+            "output/pitch std (without sign; valid)": pred.p_predictions_wo_sign.detach().std(dim=1).mean().cpu().item(),
+            "output/energy std (without sign; valid)": pred.e_predictions_wo_sign.detach().std(dim=1).mean().cpu().item(),
+            "output/pitch std (with sign; valid)": pred.p_predictions_w_sign.detach().std(dim=1).mean().cpu().item(),
+            "output/energy std (with sign; valid)": pred.e_predictions_w_sign.detach().std(dim=1).mean().cpu().item(),
         }
 
         torch.cuda.empty_cache()
@@ -123,7 +130,9 @@ class SemiCycleGANModelWrapper:
 
         output_wo_sign = InferenceOutput(
             audio_wo_sign, sign.token_length.numpy(), audio_wo_sign_lens,
-            pred.p_predictions_wo_sign.cpu().numpy(), pred.e_predictions_wo_sign.cpu().numpy(), pred.d_rounded.cpu().numpy(),
+            pred.p_predictions_wo_sign.cpu().numpy(), pred.e_predictions_wo_sign.cpu().numpy(),
+            pred.p_predictions_wo_sign.cpu().numpy(), pred.e_predictions_wo_sign.cpu().numpy(),
+            pred.d_rounded.cpu().numpy(),
             pred_prosody_label, torch.zeros_like(pred.weight_sign.detach().cpu()))
 
         # with sign language TTS
@@ -143,7 +152,9 @@ class SemiCycleGANModelWrapper:
 
         output_w_sign = InferenceOutput(
             audio_w_sign, sign.token_length.numpy(), audio_w_sign_lens,
-            pred.p_predictions_w_sign.cpu().numpy(), pred.e_predictions_w_sign.cpu().numpy(), pred.d_rounded.cpu().numpy(),
+            pred.p_predictions_w_sign.cpu().numpy(), pred.e_predictions_w_sign.cpu().numpy(),
+            pred.p_predictions.cpu().numpy(), pred.e_predictions.cpu().numpy(),
+            pred.d_rounded.cpu().numpy(),
             pred_prosody_label, pred.weight_sign.detach().cpu())
 
         torch.cuda.empty_cache()
