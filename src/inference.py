@@ -1,6 +1,5 @@
 import argparse
 from pathlib import Path
-import datetime
 import yaml
 import json
 
@@ -10,7 +9,7 @@ from torch.utils.data import DataLoader
 # from FastSpeech2.evaluate import evaluate
 from libs.util.model import get_vocoder
 
-from libs.models.semi_cycle_gan import SemiCycleGANModel
+from libs.models import SemiCycleGANModel, SemiCycleGANModelWrapper
 from dataset.dataset import AudioDataset, SignDataset
 from libs.util.save_data import save_inference
 
@@ -32,7 +31,7 @@ def main(args, configs, configs_ft):
     )
     inference_dataset = SignDataset(
         preprocess_config, train_config, args.local_rank,
-        phase="test", split="test", partial_list_path="./test_0.txt"
+        phase="test", split="test", partial_list_path="/home/aolab/Desktop/S2SProsody/src/dataset/test.txt"
     )
     speaker_info = audio_dataset.get_speaker_info()
     sign_info = train_dataset.get_sign_prosody_info()
@@ -57,15 +56,13 @@ def main(args, configs, configs_ft):
     model = SemiCycleGANModel(
         args, preprocess_config, model_config, train_config,
         speaker_info=speaker_info, sign_info=sign_info,
-        configs_ft=configs_ft, isTrain=False, distributed=False)      # create a model given opt.model and other options
+        configs_ft=configs_ft, isTrain=True, distributed=False)      # create a model given opt.model and other options
     model.load_networks(args.ckpt_path)
     model.setup(train_config)               # regular setup: load and print networks; create schedulers
-
+    model_wrapper = SemiCycleGANModelWrapper(model)
     vocoder = get_vocoder(model_config, device)
 
-    dt_now = datetime.datetime.now()
-    run_name = dt_now.strftime("%m:%d:%H:%M")
-    output_dir = Path(train_config["path"]["output_path"], run_name)
+    output_dir = Path(args.output_dir)
     if not args.without_save_wav:
         wav_dir = output_dir / "wavs"
         if args.local_rank == 0:
@@ -74,10 +71,10 @@ def main(args, configs, configs_ft):
 
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
 
-    save_inference(model, vocoder, inference_loader,
+    save_inference(model_wrapper, vocoder, inference_loader,
                    args.local_rank, sampling_rate, stats, wav_dir,
                    -1, model_config, preprocess_config, inference_dataset.partial_vid2gender,
-                   need_prosody_dist=False)
+                   need_prosody_dist=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -97,6 +94,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "-t", "--train_config", type=str, required=True, help="path to train.yaml"
+    )
+    parser.add_argument(
+        "--output_dir", type=str, required=True, help="path to output directory"
     )
     parser.add_argument(
         "--save_ckpt", action="store_true"

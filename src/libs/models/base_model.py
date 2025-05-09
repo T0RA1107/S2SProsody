@@ -25,7 +25,7 @@ class BaseModel:
         self.optimizers = []
         self.image_paths = []
 
-    def setup(self, train_config, train_data_size):
+    def setup(self, train_config, train_data_size=-1):
         if self.isTrain:
             self.schedulers = [
                 networks.get_scheduler(self.optimizers[0], train_config, train_data_size),
