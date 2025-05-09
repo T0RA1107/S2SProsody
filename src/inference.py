@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from libs.util.model import get_vocoder
 
 from libs.models.semi_cycle_gan import SemiCycleGANModel
-from datasets.dataset import AudioDataset, SignDataset
+from dataset.dataset import AudioDataset, SignDataset
 from libs.util.save_data import save_inference
 
 

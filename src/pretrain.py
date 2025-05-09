@@ -14,7 +14,7 @@ import wandb
 from tqdm import tqdm
 
 from libs.util.model import get_vocoder, get_model
-from datasets.audio_dataset import AudioDataset, AudioData
+from dataset.audio_dataset import AudioDataset, AudioData
 from libs.util.tool import init_random_seeds
 from libs.models import FastSpeech2
 from libs.models.loss_fn.fastspeech2_loss import FastSpeech2Loss, FastSpeech2LossOutput

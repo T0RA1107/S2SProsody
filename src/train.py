@@ -14,7 +14,7 @@ import wandb
 from tqdm import tqdm
 
 from libs.models import SemiCycleGANModel, SemiCycleGANModelWrapper
-from datasets import UnpairedAudioSignDataset, SignDataset
+from dataset import UnpairedAudioSignDataset, SignDataset
 from libs.util.model import get_vocoder
 from libs.util.tool import init_random_seeds
 from libs.util.save_data import save_inference, save_metadata, save_validation_loss

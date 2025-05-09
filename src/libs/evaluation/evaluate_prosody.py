@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from libs.models.semi_cycle_gan import SemiCycleGANModel
 from libs.util.tool import init_random_seeds, expand
-from datasets.dataset import AudioDataset, SignDataset
+from dataset.dataset import AudioDataset, SignDataset
 
 # DDP
 import torch.distributed as dist

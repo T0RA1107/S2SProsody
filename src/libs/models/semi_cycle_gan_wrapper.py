@@ -4,7 +4,7 @@ from collections import namedtuple
 import torch
 import torch.nn.functional as F
 
-from datasets.sign_dataset import SignData
+from dataset.sign_dataset import SignData
 from .semi_cycle_gan import SemiCycleGANModel, TrainOutput
 from .semi_cycle_gan import random_clip_batch
 
