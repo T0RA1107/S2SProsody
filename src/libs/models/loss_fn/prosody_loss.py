@@ -9,6 +9,7 @@ from einops import rearrange
 PRInfo = namedtuple("PRInfo", "v_loss a_loss total")
 PGRInfo = namedtuple("PGRInfo", "energy pitch")
 IRInfo = namedtuple("IRInfo", "energy pitch")
+SLInfo = namedtuple("SLInfo", "energy pitch")
 
 
 def sinkhorn_log(r, c, cost_matrix, lambd=1.0, num_iters=100, eps=1e-8):
@@ -136,3 +137,24 @@ class IntonationRegularizationLoss(nn.Module):
         loss_total = energy_IR + pitch_IR
         torch.cuda.empty_cache()
         return loss_total, IRInfo(energy_IR.detach().cpu().item(), pitch_IR.detach().cpu().item())
+
+
+class SpeakerLikenessLoss(nn.Module):
+    def __init__(self, speaker_info):
+        super().__init__()
+        self.speaker_info = speaker_info
+
+    def forward(self, audio_predictions, speakers):
+        energy_speaker_mean = torch.tensor([self.speaker_info["energy"]["mean"][i] for i in speakers], device=audio_predictions.e_predictions.device).float()
+        pitch_speaker_mean = torch.tensor([self.speaker_info["pitch"]["mean"][i] for i in speakers], device=audio_predictions.e_predictions.device).float()
+        energy_range = torch.tensor([3 * self.speaker_info["energy"]["std"][i] for i in speakers], device=audio_predictions.e_predictions.device).float()
+        pitch_range = torch.tensor([3 * self.speaker_info["pitch"]["std"][i] for i in speakers], device=audio_predictions.e_predictions.device).float()
+
+        energy_mean = audio_predictions.e_predictions.mean(dim=1)
+        pitch_mean = audio_predictions.p_predictions.mean(dim=1)
+
+        energy_likeness_loss = F.relu(torch.abs(energy_mean - energy_speaker_mean) - energy_range).mean()
+        pitch_likeness_loss = F.relu(torch.abs(pitch_mean - pitch_speaker_mean) - pitch_range).mean()
+        loss_total = energy_likeness_loss + pitch_likeness_loss
+        torch.cuda.empty_cache()
+        return loss_total, SLInfo(energy_likeness_loss.detach().cpu().item(), pitch_likeness_loss.detach().cpu().item())

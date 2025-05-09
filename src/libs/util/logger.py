@@ -20,6 +20,7 @@ class TrainLogger(object):
             "prosody loss/total", "prosody loss without sign/total",
             "Regularization/Energy mean", "Regularization/Pitch mean",
             "Regularization/Energy intonation", "Regularization/Pitch intonation",
+            "Regularization/Energy Speaker Likeness", "Regularization/Pitch Speaker Likeness",
         ]
 
         if resume:

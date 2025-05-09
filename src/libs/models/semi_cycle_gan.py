@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from libs.util.audio_pool import AudioPool
 from .base_model import BaseModel
 from . import networks
-from .loss_fn.prosody_loss import ProsodyReconstructionLoss, ProsodyGuidedRegularizationLoss, IntonationRegularizationLoss
+from .loss_fn.prosody_loss import ProsodyReconstructionLoss, ProsodyGuidedRegularizationLoss, IntonationRegularizationLoss, SpeakerLikenessLoss
 from .sign2speech import Sign2Speech
 from .prosody_estimator import ProsodyDistEstimator1D
 
@@ -112,6 +112,7 @@ class SemiCycleGANModel(BaseModel):
             self.criterionPR = ProsodyReconstructionLoss(train_config["loss"]["prosody"]["dist_loss_type"]).to(self.device, non_blocking=True)
             self.criterionRGR = ProsodyGuidedRegularizationLoss(sign_info, speaker_info, margin=train_config["loss"]["PGR"]["margin"]).to(self.device, non_blocking=True)
             self.criterionIR = IntonationRegularizationLoss().to(self.device, non_blocking=True)
+            self.criterionSL = SpeakerLikenessLoss(speaker_info).to(self.device, non_blocking=True)
             # learnable weight of Generative loss
             # self.weight_G = nn.Parameter(torch.tensor(0.), requires_grad=True)
             train_parameters = []
@@ -253,10 +254,12 @@ class SemiCycleGANModel(BaseModel):
         loss_PGR, pgr_info = self.criterionRGR(output_w_sign, prosody_label, speakers)
         # Intonation Regularization
         loss_IR, ir_info = self.criterionIR(output_w_sign, output_wo_sign)
+        # Speaker Likeness Regularization
+        loss_SL, sl_info = self.criterionSL(output_w_sign, speakers)
         # MoE weight regularization
         loss_gate = torch.abs(1 - output_w_sign.weight_sign.mean())
         # sum of loss around sign
-        sign_loss = loss_prosody * self.weight_prosody + loss_PGR * self.weight_regdist_mean + loss_IR * self.weight_intotation + loss_gate * self.weight_gate
+        sign_loss = loss_prosody * self.weight_prosody + loss_PGR * self.weight_regdist_mean + loss_IR * self.weight_intotation + loss_SL + loss_gate * self.weight_gate
         # calculate loss for auto weight tuning
         # loss_weight_tune = torch.abs(loss_G_audio.detach() * F.softplus(self.weight_G) - loss_prosody.detach() * self.weight_prosody)
         # combined loss and calculate gradients
@@ -270,6 +273,7 @@ class SemiCycleGANModel(BaseModel):
             "prosody loss/total": pr_info_w_sign.total, "prosody loss without sign/total": pr_info_wo_sign.total,
             "Regularization/Energy mean": pgr_info.energy, "Regularization/Pitch mean": pgr_info.pitch,
             "Regularization/Energy intonation": ir_info.energy, "Regularization/Pitch intonation": ir_info.pitch,
+            "Regularization/Energy Speaker Likeness": sl_info.energy, "Regularization/Pitch Speaker Likeness": sl_info.pitch,
             # "Regularization/Weight tune": loss_weight_tune.detach().cpu().item(),
             "GAN loss/G": loss_G_audio.detach().cpu().item(), # "GAN loss/G_weighted": loss_G_audio_weighted.detach().cpu().item(),
             "total": loss_G.detach().cpu().item(),

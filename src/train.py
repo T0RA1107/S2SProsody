@@ -69,7 +69,7 @@ def main(args, configs, configs_ft):
     )
     inference_dataset = SignDataset(
         preprocess_config, train_config, args.local_rank,
-        phase="test", split="val", partial_list_path="./datasets/valid_list.txt"
+        phase="test", split="val", partial_list_path="./dataset/valid_list.txt"
     )
     speaker_info = dataset.audio_dataset.get_speaker_info()
     sign_info = dataset.sign_dataset.get_sign_prosody_info()
