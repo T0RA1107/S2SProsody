@@ -80,16 +80,9 @@ class BaseModel:
                 net = getattr(self, "net" + name)
                 if isinstance(net, torch.nn.parallel.DistributedDataParallel):
                     net = net.module
-                # net = torch.nn.SyncBatchNorm.convert_sync_batchnorm(net)
-                # if you are using PyTorch newer than 0.4 (e.g., built from
-                # GitHub source), you can remove str() on self.device
                 state_dict = ckpt[name]
                 if hasattr(state_dict, "_metadata"):
                     del state_dict._metadata
-
-                # # patch InstanceNorm checkpoints prior to 0.4
-                # for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
-                #     self.__patch_instance_norm_state_dict(state_dict, net, key.split("."))
                 net.load_state_dict(state_dict)
                 net.to(self.device)
 
@@ -131,7 +124,7 @@ class BaseModel:
 
     def update_learning_rate(self):
         """Update learning rates for all the networks; called at the end of every epoch"""
-        for i, (name, scheduler) in enumerate(zip(self.model_names, self.schedulers)):
+        for i, (name, scheduler) in enumerate(zip(self.model_names[:2], self.schedulers)):
             old_lr = self.optimizers[i].param_groups[0]["lr"]
             if scheduler.T_0 <= scheduler.last_epoch:
                 continue
@@ -143,7 +136,7 @@ class BaseModel:
 
     def get_learning_rate(self):
         lr_dict = dict()
-        for i, name in enumerate(self.model_names):
+        for i, name in enumerate(self.model_names[:2]):
             lr = self.optimizers[i].param_groups[0]["lr"]
             lr_dict["lr/" + name] = lr
         return lr_dict

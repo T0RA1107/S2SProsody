@@ -39,7 +39,7 @@ def plot_mel(data: Tuple[npt.NDArray[np.float32], ...], stats: Tuple[float, ...]
     ax1.plot(pitch, color="tomato")
     ax1.set_xlim(0, mel.shape[1])
     ax1.set_ylim(0, pitch_max)
-    ax1.set_ylabel("F0", color="tomato")
+    ax1.set_ylabel("F0", color="tomato", fontsize="x-large")
     ax1.tick_params(
         labelsize="x-small", colors="tomato", bottom=False, labelbottom=False)
 
@@ -47,7 +47,7 @@ def plot_mel(data: Tuple[npt.NDArray[np.float32], ...], stats: Tuple[float, ...]
     ax2.plot(energy, color="darkviolet")
     ax2.set_xlim(0, mel.shape[1])
     ax2.set_ylim(energy_min, energy_max)
-    ax2.set_ylabel("Energy", color="darkviolet")
+    ax2.set_ylabel("Energy", color="darkviolet", fontsize="x-large")
     ax2.yaxis.set_label_position("right")
     ax2.tick_params(
         labelsize="x-small", colors="darkviolet",
@@ -56,31 +56,6 @@ def plot_mel(data: Tuple[npt.NDArray[np.float32], ...], stats: Tuple[float, ...]
         right=True, labelright=True,
     )
 
-    # pos_weight = ax_mel.get_position()
-    # pos_weight.y1, pos_weight.y0 = pos_weight.y0 - 0.05, pos_weight.y0 - (pos_weight.y1 - pos_weight.y0) * 0.5
-    # ax_weight_pitch = axd["weight"]
-    # ax_weight_pitch.set_position(pos_weight)
-    # ax_weight_pitch.plot(weight_pitch, color="tomato")
-    # ax_weight_pitch.set_xlim(0, mel.shape[1])
-    # ax_weight_pitch.set_ylim(0, 1)
-    # ax_weight_pitch.set_ylabel("Weight of Pitch", color="tomato")
-    # ax_weight_pitch.tick_params(
-    #     labelsize="x-small", colors="tomato", bottom=False, labelbottom=False)
-    # ax_weight_pitch.set_anchor("W")
-    # ax_weight_energy = add_axis(fig, ax_weight_pitch)
-
-    # ax_weight_energy.plot(weight_energy, color="darkviolet")
-    # ax_weight_energy.set_position(pos_weight)
-    # ax_weight_energy.set_xlim(0, mel.shape[1])
-    # ax_weight_energy.set_ylim(0, 1)
-    # ax_weight_energy.set_ylabel("Weight of Energy", color="darkviolet")
-    # ax_weight_energy.yaxis.set_label_position("right")
-    # ax_weight_energy.tick_params(
-    #     labelsize="x-small", colors="darkviolet",
-    #     bottom=False, labelbottom=False,
-    #     left=False, labelleft=False,
-    #     right=True, labelright=True)
-    # ax_weight_energy.set_anchor("W")
     pos_weight = ax_mel.get_position()
     pos_weight.y1, pos_weight.y0 = pos_weight.y0 - 0.05, pos_weight.y0 - (pos_weight.y1 - pos_weight.y0) * 0.5
     ax_weight = axd["weight"]
@@ -159,14 +134,15 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
                     model_config,
                     preprocess_config,
                 )[0]
-                sf.write(save_wav_dir / f"wo|{batch.raw_texts[i]}.wav", wav_prediction, samplerate=sampling_rate)
+                txt_id = batch.raw_texts[i]#id(batch.raw_texts[i])
+                sf.write(save_wav_dir / f"wo|{txt_id}.wav", wav_prediction, samplerate=sampling_rate)
                 duration = output_wo_sign.d_rounded[i]
                 plot_mel((
                     mel_prediction_wo_sign.squeeze(0).cpu().numpy(),
                     expand(output_wo_sign.p_predictions_mixed[i], duration),
                     expand(output_wo_sign.e_predictions_mixed[i], duration),
                     expand(output_wo_sign.weight_sign[i][0].cpu().numpy(), duration)),
-                    stats, (save_mel_dir / f"wo|{batch.raw_texts[i]}").as_posix())
+                    stats, (save_mel_dir / f"wo|{txt_id}").as_posix())
                 # with sign
                 mel_len_w_sign = output_w_sign.mel_lens[i]
                 mel_prediction_w_sign = output_w_sign.mels[i, :, :mel_len_w_sign].detach().transpose(1, 2)
@@ -176,22 +152,22 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
                     model_config,
                     preprocess_config,
                 )[0]
-                sf.write(save_wav_dir / f"w|{batch.raw_texts[i]}.wav", wav_prediction, samplerate=sampling_rate)
+                sf.write(save_wav_dir / f"w|{txt_id}.wav", wav_prediction, samplerate=sampling_rate)
                 duration = output_w_sign.d_rounded[i]
                 plot_mel((
                     mel_prediction_w_sign.squeeze(0).cpu().numpy(),
                     expand(output_w_sign.p_predictions_mixed[i], duration),
                     expand(output_w_sign.e_predictions_mixed[i], duration),
                     expand(output_w_sign.weight_sign[i][0].cpu().numpy(), duration)),
-                    stats, (save_mel_dir / f"w|{batch.raw_texts[i]}").as_posix())
+                    stats, (save_mel_dir / f"w|{txt_id}").as_posix())
                 if need_prosody_dist:
                     plot_sign_prosody_dist(
                         batch.prosody_label[i].numpy(), output_w_sign.sign_prosody_predictions[i],
                         energy_mean[i] * sign_info["std"][0] + sign_info["mean"][0], pitch_mean[i] * sign_info["std"][1] + sign_info["mean"][1],
-                        save_dist_dir, batch.raw_texts[i])
+                        save_dist_dir, txt_id)
                 # add metadata
                 name_list.append(batch.video_names[i])
-                text_list.append(batch.raw_texts[i])
+                text_list.append(txt_id)
                 max_len = max(mel_len_wo_sign, mel_len_w_sign)
                 l2 = F.mse_loss(
                     F.pad(mel_prediction_wo_sign, (0, max_len - mel_len_wo_sign)),
@@ -201,6 +177,40 @@ def save_inference(model_wrapper: SemiCycleGANModelWrapper, vocoder, data_loader
             torch.cuda.empty_cache()
     metadata = pd.DataFrame({ "name": name_list, "text": text_list, "L2": l2_list })
     metadata.to_csv(save_metadata_dir / f"{epoch}_{local_rank}.tsv", sep="\t", index=False)
+
+
+def calc_expressiveness(model_wrapper: SemiCycleGANModelWrapper, data_loader, stats: Tuple[float, ...]):
+    model_wrapper.model.set_eval_mode()
+    import json
+    with open("../data/VCTK-Corpus/preprocess/stats.json") as f:
+        stats = json.load(f)
+    pitch_min, pitch_max, pitch_mean, pitch_std = stats["pitch"]
+    energy_min, energy_max, energy_mean, energy_std = stats["energy"]
+    pitch_expressiveness_w_sign = []
+    energy_expressiveness_w_sign = []
+    pitch_expressiveness_wo_sign = []
+    energy_expressiveness_wo_sign = []
+    for batchs in data_loader:
+        for batch in batchs:
+            output_wo_sign, output_w_sign, speakers = model_wrapper.inference(batch)
+            bs = output_wo_sign.mels.shape[0]
+            for i in range(bs):
+                pitch_std_w_sign = expand(output_w_sign.p_predictions_mixed[i], output_w_sign.d_rounded[i]).std()
+                energy_std_w_sign = expand(output_w_sign.e_predictions_mixed[i], output_w_sign.d_rounded[i]).std()
+                pitch_expressiveness_w_sign.append(pitch_std_w_sign)
+                energy_expressiveness_w_sign.append(energy_std_w_sign)
+                pitch_std_wo_sign = expand(output_wo_sign.p_predictions_mixed[i], output_wo_sign.d_rounded[i]).std()
+                energy_std_wo_sign = expand(output_wo_sign.e_predictions_mixed[i], output_wo_sign.d_rounded[i]).std()
+                pitch_expressiveness_wo_sign.append(pitch_std_wo_sign)
+                energy_expressiveness_wo_sign.append(energy_std_wo_sign)
+    pitch_expressiveness_w_sign = pitch_std * np.mean(pitch_expressiveness_w_sign)
+    energy_expressiveness_w_sign = energy_std * np.mean(energy_expressiveness_w_sign)
+    pitch_expressiveness_wo_sign = pitch_std * np.mean(pitch_expressiveness_wo_sign)
+    energy_expressiveness_wo_sign = energy_std * np.mean(energy_expressiveness_wo_sign)
+    print(f"Pitch expressiveness w/  sign: {np.mean(pitch_expressiveness_w_sign):.4f}")
+    print(f"Energy expressiveness w/  sign: {np.mean(energy_expressiveness_w_sign):.4f}")
+    print(f"Pitch expressiveness w/o sign: {np.mean(pitch_expressiveness_wo_sign):.4f}")
+    print(f"Energy expressiveness w/o sign: {np.mean(energy_expressiveness_wo_sign):.4f}")
 
 
 def save_metadata(n_gpus: int, output_dir: Path, epoch: int):
