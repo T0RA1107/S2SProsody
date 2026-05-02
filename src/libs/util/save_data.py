@@ -57,7 +57,7 @@ def plot_mel(data: Tuple[npt.NDArray[np.float32], ...], stats: Tuple[float, ...]
     )
 
     pos_weight = ax_mel.get_position()
-    pos_weight.y1, pos_weight.y0 = pos_weight.y0 - 0.05, pos_weight.y0 - (pos_weight.y1 - pos_weight.y0) * 0.5
+    pos_weight.y1, pos_weight.y0 = pos_weight.y0 - 0.05, pos_weight.y0 - (pos_weight.y1 - pos_weight.y0) * 0.5  # type: ignore[misc]
     ax_weight = axd["weight"]
     ax_weight.set_position(pos_weight)
     ax_weight.plot(weight, color="tomato")
@@ -183,9 +183,9 @@ def calc_expressiveness(model_wrapper: SemiCycleGANModelWrapper, data_loader, st
     model_wrapper.model.set_eval_mode()
     import json
     with open("../data/VCTK-Corpus/preprocess/stats.json") as f:
-        stats = json.load(f)
-    pitch_min, pitch_max, pitch_mean, pitch_std = stats["pitch"]
-    energy_min, energy_max, energy_mean, energy_std = stats["energy"]
+        raw_stats = json.load(f)
+    pitch_min, pitch_max, pitch_mean, pitch_std = raw_stats["pitch"]
+    energy_min, energy_max, energy_mean, energy_std = raw_stats["energy"]
     pitch_expressiveness_w_sign = []
     energy_expressiveness_w_sign = []
     pitch_expressiveness_wo_sign = []
