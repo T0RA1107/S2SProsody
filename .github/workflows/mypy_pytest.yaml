@@ -18,7 +18,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install numpy transformers
+          pip install numpy transformers types-PyYAML
           pip install mypy pytest pytest-cov pytest-mock
 
       - name: Type check

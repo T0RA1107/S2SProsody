@@ -1,6 +1,6 @@
 from logging import getLogger
 from pathlib import Path
-from typing import Tuple, Dict, List, Any
+from typing import Tuple, Dict, List, Any, Optional
 from collections import namedtuple
 
 import math
@@ -19,7 +19,7 @@ SignData = namedtuple("SignData", "raw_texts text_tokens mask visual_prefix toke
 
 class SignDataset(Dataset):
     def __init__(self, preprocess_config: Dict[str, Any], train_config: Dict[str, Any], local_rank: int,
-                 phase: str="train", split: str="train", partial_list_path: str=None, sort: bool=False, drop_last: bool=False):
+                 phase: str="train", split: str="train", partial_list_path: Optional[str]=None, sort: bool=False, drop_last: bool=False):
         self.sort = sort
         self.drop_last = drop_last
         self.batch_size = train_config["optimizer"]["batch_size"]

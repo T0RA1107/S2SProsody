@@ -1,5 +1,5 @@
 import random
-from typing import Dict
+from typing import Dict, Optional
 from collections import namedtuple
 import torch
 import torch.nn.functional as F
@@ -33,8 +33,8 @@ class SemiCycleGANModelWrapper:
         max_src_len = token_length.max().to(self.model.device, non_blocking=True)
         text_tokens = sign.text_tokens[:, :max_src_len].to(self.model.device, non_blocking=True)
 
-        speakers = random.choices(self.model.all_speakers, k=batch_size)
-        speakers = torch.tensor(speakers, device=self.model.device).long()
+        speakers_list = random.choices(self.model.all_speakers, k=batch_size)
+        speakers = torch.tensor(speakers_list, device=self.model.device).long()
 
         # with sign language TTS
         pred = self.model.netG_sign2audio(
@@ -93,16 +93,16 @@ class SemiCycleGANModelWrapper:
         return loss_log
 
     @torch.no_grad()
-    def inference(self, sign: SignData, vid2gender: Dict[str, str]=None, estimateProsody: bool=False):
+    def inference(self, sign: SignData, vid2gender: Optional[Dict[str, str]]=None, estimateProsody: bool=False):
         token_length = sign.token_length.to(self.model.device, non_blocking=True)
         max_src_len = token_length.max().to(self.model.device, non_blocking=True)
         text_tokens = sign.text_tokens[:, :max_src_len].to(self.model.device, non_blocking=True)
 
         if vid2gender is not None:
-            speakers = [self.model.target_speakers[vid2gender[vid]] for vid in sign.video_names]
+            speakers_list = [self.model.target_speakers[vid2gender[vid]] for vid in sign.video_names]
         else:
-            speakers = [self.model.target_speakers[["male", "female"][random.randint(0, 1)]] for _ in range(len(sign.video_names))]
-        speakers = torch.tensor(speakers, device=self.model.device).long()
+            speakers_list = [self.model.target_speakers[["male", "female"][random.randint(0, 1)]] for _ in range(len(sign.video_names))]
+        speakers = torch.tensor(speakers_list, device=self.model.device).long()
 
         # without sign language TTS
         pred = self.model.netG_sign2audio(

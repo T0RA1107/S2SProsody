@@ -48,7 +48,7 @@ class Sign2Speech(FastSpeech2):
             self.visual_project == nn.Identity()
         self.MoE = MoE(model_config)
 
-    def forward(
+    def forward(  # type: ignore[override]
         self,
         speakers,
         texts,

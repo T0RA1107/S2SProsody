@@ -40,10 +40,10 @@ def random_clip_batch(inputs: torch.Tensor, lengths: torch.Tensor, clip_length: 
     for i in range(inputs.shape[0]):
         true_length = min(L, lengths[i].item())
         if true_length - clip_length > 0:
-            start = torch.randint(0, true_length - clip_length + 1, (1,)).item()
+            start = torch.randint(0, int(true_length - clip_length) + 1, (1,)).item()
         else:
             start = 0
-        clip = inputs[i, :, start:start + clip_length]
+        clip = inputs[i, :, start:start + int(clip_length)]  # type: ignore[misc]
         clips.append(clip)
 
     return torch.stack(clips, dim=0)
