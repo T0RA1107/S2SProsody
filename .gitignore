@@ -13,6 +13,8 @@ __pycache__
 .DS_Store
 *.prm
 *.pth
+*.pth.tar
+*.pth.tar.zip
 events.out.tfevents.*
 wandb
 wandb_result
