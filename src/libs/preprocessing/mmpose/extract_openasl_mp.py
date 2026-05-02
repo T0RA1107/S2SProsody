@@ -89,6 +89,16 @@ def main():
         '--splits',
         type=int,
         default=1)
+    parser.add_argument(
+        '--output-root',
+        type=str,
+        required=True,
+        help='Directory to save extracted pose keypoints (.pkl files)')
+    parser.add_argument(
+        '--sample-list',
+        type=str,
+        required=True,
+        help='Path to text file listing video paths to process')
 
     assert has_mmdet, 'Please install mmdet to run the demo.'
 
@@ -123,12 +133,12 @@ def main():
         'pose_model': pose_model,
         'dataset': dataset,
         'dataset_info': dataset_info,
-        'output_root': '/home/ubuntu/slocal/S2SProsody/data/how2sign-data/How2Sign/sentence_level/train/rgb_front/raw_videos', #  '/home/ubuntu/slocal/S2SProsody/data/OpenASL/data/mmpose',
+        'output_root': args.output_root,
         'args': args,
     }
 
-    print("sample:\n", '/home/ubuntu/slocal/S2SProsody/src/comparison/GloFE/tools/how2sign_train.txt')
-    all_samples = load_sample_names('/home/ubuntu/slocal/S2SProsody/src/comparison/GloFE/tools/how2sign_train.txt')
+    print("sample:\n", args.sample_list)
+    all_samples = load_sample_names(args.sample_list)
     # all_samples = all_samples[:5]
     total_samples = len(all_samples)
     print('Total samples:', total_samples)

@@ -40,10 +40,10 @@ def random_clip_batch(inputs: torch.Tensor, lengths: torch.Tensor, clip_length: 
     for i in range(inputs.shape[0]):
         true_length = min(L, lengths[i].item())
         if true_length - clip_length > 0:
-            start = torch.randint(0, true_length - clip_length + 1, (1,)).item()
+            start = torch.randint(0, int(true_length - clip_length) + 1, (1,)).item()
         else:
             start = 0
-        clip = inputs[i, :, start:start + clip_length]
+        clip = inputs[i, :, start:start + int(clip_length)]  # type: ignore[misc]
         clips.append(clip)
 
     return torch.stack(clips, dim=0)
@@ -70,7 +70,6 @@ class SemiCycleGANModel(BaseModel):
             if args.local_rank == 0:
                 logger.info(f"Load {ckpt_path.as_posix()}")
             ckpt = torch.load(ckpt_path, map_location="cpu")
-            # self.netG_sign2audio.load_state_dict(ckpt["model"], strict=False)
             if distributed:
                 self.netG_sign2audio.module.load_state_dict(ckpt["model"], strict=False)
             else:
@@ -98,6 +97,7 @@ class SemiCycleGANModel(BaseModel):
             self.weight_prosody = train_config["loss"]["weight"]["prosody"]
             self.weight_regdist_mean = train_config["loss"]["weight"]["regdist_mean"]
             self.weight_intotation = train_config["loss"]["weight"]["intonation"]
+            self.weight_sl = train_config["loss"]["weight"]["speaker_likeness"]
             self.weight_gate = train_config["loss"]["weight"]["gate"]
 
             # initialize prosody estimator
@@ -105,6 +105,7 @@ class SemiCycleGANModel(BaseModel):
                 3, train_config["loss"]["prosody"]["bins"], 4
             )
             self.netProsody_estimator = networks.init_net(self.netProsody_estimator, args, distributed=distributed)
+            self.model_names.append("Prosody_estimator")
 
             self.fake_audio_pool = AudioPool(train_config["GAN"]["pool_size"])  # create image buffer to store previously generated images
             # define loss functions
@@ -241,7 +242,6 @@ class SemiCycleGANModel(BaseModel):
 
         pred_fake = self.netD_audio(fake)
         loss_G_audio = self.criterionGAN(pred_fake, True)
-        # loss_G_audio_weighted = loss_G_audio * F.softplus(self.weight_G.detach())
 
         # Prosody Reconstruction
         prosody_label = self.real_sign.prosody_label.to(self.device, non_blocking=True)
@@ -255,15 +255,12 @@ class SemiCycleGANModel(BaseModel):
         # Intonation Regularization
         loss_IR, ir_info = self.criterionIR(output_w_sign, output_wo_sign)
         # Speaker Likeness Regularization
-        loss_SL, sl_info = self.criterionSL(output_w_sign, speakers)
+        loss_SL, sl_info = self.criterionSL(output_w_sign, output_wo_sign, speakers)
         # MoE weight regularization
         loss_gate = torch.abs(1 - output_w_sign.weight_sign.mean())
         # sum of loss around sign
-        sign_loss = loss_prosody * self.weight_prosody + loss_PGR * self.weight_regdist_mean + loss_IR * self.weight_intotation + loss_SL + loss_gate * self.weight_gate
-        # calculate loss for auto weight tuning
-        # loss_weight_tune = torch.abs(loss_G_audio.detach() * F.softplus(self.weight_G) - loss_prosody.detach() * self.weight_prosody)
-        # combined loss and calculate gradients
-        loss_G = loss_G_audio + sign_loss # + loss_weight_tune
+        sign_loss = loss_prosody * self.weight_prosody + loss_PGR * self.weight_regdist_mean + loss_IR * self.weight_intotation + loss_SL * self.weight_sl + loss_gate * self.weight_gate
+        loss_G = loss_G_audio + sign_loss
         loss_G.backward()
 
         loss_log = {
@@ -274,8 +271,7 @@ class SemiCycleGANModel(BaseModel):
             "Regularization/Energy mean": pgr_info.energy, "Regularization/Pitch mean": pgr_info.pitch,
             "Regularization/Energy intonation": ir_info.energy, "Regularization/Pitch intonation": ir_info.pitch,
             "Regularization/Energy Speaker Likeness": sl_info.energy, "Regularization/Pitch Speaker Likeness": sl_info.pitch,
-            # "Regularization/Weight tune": loss_weight_tune.detach().cpu().item(),
-            "GAN loss/G": loss_G_audio.detach().cpu().item(), # "GAN loss/G_weighted": loss_G_audio_weighted.detach().cpu().item(),
+            "GAN loss/G": loss_G_audio.detach().cpu().item(),
             "total": loss_G.detach().cpu().item(),
             # Output memo
             "output/weight_sign mean": output_w_sign.weight_sign.detach().mean().cpu().item(),
@@ -302,9 +298,7 @@ class SemiCycleGANModel(BaseModel):
         loss_log.update(loss_log_G)
         nn.utils.clip_grad_norm_(self.netG_sign2audio.parameters(), self.grad_clip_thresh)
         nn.utils.clip_grad_norm_(self.netProsody_estimator.parameters(), self.grad_clip_thresh)
-        # nn.utils.clip_grad_norm_([self.weight_G], self.grad_clip_thresh)
         self.optimizer_G.step()
-        # self.optimizer_w.step()
         # Discriminator's optimizing
         if random.random() < 0.5:
             self.real_audio = output_wo_sign
@@ -319,5 +313,4 @@ class SemiCycleGANModel(BaseModel):
                 _, self.loss_log_D = self.calc_D(output_w_sign)
         self.step = (self.step + 1) % 2
         loss_log.update(self.loss_log_D)
-        torch.cuda.empty_cache()
         return loss_log

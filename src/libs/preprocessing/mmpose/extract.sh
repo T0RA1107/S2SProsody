@@ -1,4 +1,6 @@
-MMPOSE_ROOT=/home/ubuntu/slocal/S2SProsody/lib/
+# Set MMPOSE_ROOT to your local mmpose installation directory, e.g.:
+# export MMPOSE_ROOT=/path/to/mmpose
+: "${MMPOSE_ROOT:?MMPOSE_ROOT must be set to the mmpose installation directory}"
 python extract_openasl_mp.py \
     $MMPOSE_ROOT/mmpose/demo/mmdetection_cfg/faster_rcnn_r50_fpn_coco.py \
     $MMPOSE_ROOT/mmpose/mmpose/models/faster_rcnn_r50_fpn_1x_coco_20200130-047c8118.pth \

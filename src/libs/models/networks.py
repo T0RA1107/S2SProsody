@@ -16,6 +16,10 @@ class Identity(nn.Module):
         return x
 
 
+_BATCH_NORM = {1: nn.BatchNorm1d, 2: nn.BatchNorm2d, 3: nn.BatchNorm3d}
+_INSTANCE_NORM = {1: nn.InstanceNorm1d, 2: nn.InstanceNorm2d, 3: nn.InstanceNorm3d}
+
+
 def get_norm_layer(norm_type='instance', dim=2):
     """Return a normalization layer
 
@@ -26,9 +30,9 @@ def get_norm_layer(norm_type='instance', dim=2):
     For InstanceNorm, we do not use learnable affine parameters. We do not track running statistics.
     """
     if norm_type == 'batch':
-        norm_layer = functools.partial(eval(f"nn.BatchNorm{dim}d"), affine=True, track_running_stats=True)
+        norm_layer = functools.partial(_BATCH_NORM[dim], affine=True, track_running_stats=True)
     elif norm_type == 'instance':
-        norm_layer = functools.partial(eval(f"nn.InstanceNorm{dim}d"), affine=False, track_running_stats=False)
+        norm_layer = functools.partial(_INSTANCE_NORM[dim], affine=False, track_running_stats=False)
     elif norm_type == 'none':
         def norm_layer(x):
             return Identity()

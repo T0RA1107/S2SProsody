@@ -11,7 +11,7 @@ from libs.util.model import get_vocoder
 
 from libs.models import SemiCycleGANModel, SemiCycleGANModelWrapper
 from dataset.dataset import AudioDataset, SignDataset
-from libs.util.save_data import save_inference
+from libs.util.save_data import save_inference, calc_expressiveness
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -31,7 +31,7 @@ def main(args, configs, configs_ft):
     )
     inference_dataset = SignDataset(
         preprocess_config, train_config, args.local_rank,
-        phase="test", split="test", partial_list_path="/home/aolab/Desktop/S2SProsody/src/dataset/test.txt"
+        phase="test", split="test", partial_list_path=args.partial_list_path
     )
     speaker_info = audio_dataset.get_speaker_info()
     sign_info = train_dataset.get_sign_prosody_info()
@@ -71,10 +71,12 @@ def main(args, configs, configs_ft):
 
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
 
-    save_inference(model_wrapper, vocoder, inference_loader,
-                   args.local_rank, sampling_rate, stats, wav_dir,
-                   -1, model_config, preprocess_config, inference_dataset.partial_vid2gender,
-                   need_prosody_dist=True)
+    calc_expressiveness(model_wrapper, inference_loader, stats)
+
+    # save_inference(model_wrapper, vocoder, inference_loader,
+    #                args.local_rank, sampling_rate, stats, wav_dir,
+    #                -1, model_config, preprocess_config, inference_dataset.partial_vid2gender,
+    #                need_prosody_dist=True)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -103,6 +105,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--without_save_wav", action="store_true"
+    )
+    parser.add_argument(
+        "--partial_list_path", type=str, default=None,
+        help="path to a text file listing video IDs to run inference on (default: full test set)"
     )
     args = parser.parse_args()
 
